@@ -60,3 +60,24 @@ test('an unknown command fails loudly', () => {
     { encoding: 'utf8', stdio: 'pipe' },
   ), /unknown command/);
 });
+
+test('an unknown option is refused rather than read as a path', () => {
+  // A stale client that silently ignored --secret would publish publicly while
+  // the caller believed the site was unlisted. Flags that decide who can see
+  // something must fail loudly when they are not understood.
+  const run = (args) => execFileSync(
+    'bash', [new URL('../bin/jmp2', import.meta.url).pathname, ...args],
+    { encoding: 'utf8', stdio: 'pipe', env: { ...process.env, JMP2_TOKEN: 'x' } },
+  );
+  assert.throws(() => run(['push', 'slug', '.', '--secrit']), /unknown option/);
+  assert.throws(() => run(['push', 'slug', '--visibility=secret']), /unknown option/);
+});
+
+test('the visibility flags the docs advertise are all understood', () => {
+  const source = readFileSync(new URL('../bin/jmp2', import.meta.url), 'utf8');
+  for (const flag of ['--secret', '--public', '--password']) {
+    assert.ok(new RegExp(`^\\s*${flag}\\)`, 'm').test(source), `no case for ${flag}`);
+  }
+  assert.ok(/^\s*secret\)/m.test(source), 'no `jmp2 secret` command');
+  assert.ok(/^\s*public\)/m.test(source), 'no `jmp2 public` command');
+});

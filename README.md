@@ -47,6 +47,66 @@ So `[api](./api.md)` renders as `href="./api"` and resolves correctly, and
 - Root-relative links (`/img/a.png`) are rewritten to sit under the site root,
   since a site is mounted at `/<slug>/` rather than at `/`.
 
+## Visibility
+
+Every site is one of three things; new sites are **public**.
+
+| State | Reachable by URL | Listed on the tenant index | Password |
+| --- | --- | --- | --- |
+| `public` | yes | yes | no |
+| `secret` | yes | no | no |
+| `secret` + password | yes | no | HTTP Basic |
+
+Secret means *unlisted*, not private — anyone holding the URL can still read it.
+That distinction is spelled out in the UI rather than left to the word "secret",
+because reading it as "nobody can reach this" is the dangerous misunderstanding.
+
+```sh
+jmp2 push handbook ./docs --secret
+jmp2 push handbook ./docs --password hunter2   # implies --secret
+jmp2 public handbook                            # relist, dropping the password
+```
+
+A username is optional: set one and Basic auth must match it, otherwise any
+username is accepted. Visibility, username and password are all settable from
+the dashboard as well as the CLI.
+
+Passwords are PBKDF2-SHA256 with a per-site salt. Three things make the gate
+hold:
+
+- **Protected sites never enter the shared edge cache.** A cached response would
+  otherwise be served to the next visitor with no credentials at all. They also
+  carry `Cache-Control: private, no-store`.
+- **Everything under the site is gated**, not just rendered pages — assets and
+  raw `.md` too.
+- **Clearing a password is explicit** (`"password": null`), so a routine publish
+  cannot unlock a site by accident.
+
+Basic auth resends credentials on every request, so a protected page with ten
+images would pay the KDF eleven times. Successful verifications are memoized per
+isolate, keyed by the stored hash *and* the supplied password — rotating the
+password changes the stored hash, which changes the key, so a stale isolate
+cannot keep honouring the old one.
+
+Passwords are sent to the API in an `X-Site-Password` header rather than the
+query string: query strings end up in access logs, shell history and `Referer`.
+
+## The dashboard
+
+`/account` lists every site the signed-in owner has, secret ones included, with
+its visibility, size and version. From there they can change access (public or
+secret, username, password) and edit any markdown document in a plain textarea.
+
+The editor is a `<textarea>` and a form post — the CSP admits only the theme
+toggle, so there is no script to lean on. Saving copies the live manifest into a
+new version, overwrites the one file and flips the pointer: the same
+copy-on-write publish the API performs, so the previous version stays available
+for rollback.
+
+An empty password field means "leave it alone", not "remove it". Removing a
+password is a separate checkbox, so saving a username cannot silently unlock a
+site.
+
 ## Versions
 
 Every publish writes a new version and flips a pointer only once it is complete,
@@ -179,6 +239,11 @@ Its frontmatter description is deliberately a single quoted line: the flat
 be able to read this file.
 
 ## Look and feel
+
+Article pages are a single centred column with the navigation floated into the
+left margin: the site's other pages, then the current document's own outline.
+Below 1280px the rail collapses to a block above the article rather than
+competing with the text for width.
 
 Monochrome, with a light/dark toggle. Because no hue carries meaning, links are
 underlined rather than coloured.

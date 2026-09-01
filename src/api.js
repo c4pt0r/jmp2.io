@@ -4,6 +4,7 @@ import {
 } from './util.js';
 import { maybeGunzip, parseTar, stripCommonPrefix } from './tar.js';
 import { mintToken } from './tokens.js';
+import { hashPassword } from './password.js';
 import { LIMITS as RATE, clientIp, hit, retryHeaders } from './ratelimit.js';
 import { splitFrontmatter } from './render.js';
 import { objectKey } from './serve.js';
@@ -232,6 +233,56 @@ async function quotaCheck(env, tenantId, quotaBytes, incomingBytes) {
   });
 }
 
+const VISIBILITIES = new Set(['public', 'secret']);
+
+/**
+ * Visibility requested by an upload. The password arrives in a header rather
+ * than the query string: query strings end up in access logs, shell history and
+ * `Referer`, and this one is a credential.
+ */
+function requestedVisibility(request, url) {
+  const visibility = url.searchParams.get('visibility') ?? undefined;
+  const password = request.headers.get('x-site-password') ?? undefined;
+  return visibility === undefined && password === undefined ? null : { visibility, password };
+}
+
+/**
+ * Apply a visibility change. A password implies `secret` — a listed site with a
+ * password would be an odd thing to advertise — and clearing the password is
+ * explicit (`password: null`) rather than implied by omitting it, so a routine
+ * publish cannot accidentally unlock a protected site.
+ */
+async function setVisibility(env, tenantId, slug, { visibility, password }) {
+  if (visibility !== undefined && !VISIBILITIES.has(visibility)) {
+    return err(400, "visibility must be 'public' or 'secret'");
+  }
+  const sets = [];
+  const binds = [];
+
+  if (password !== undefined) {
+    if (password === null || password === '') {
+      sets.push('password_hash = NULL');
+    } else if (typeof password !== 'string' || password.length < 4 || password.length > 256) {
+      return err(400, 'password must be 4-256 characters');
+    } else {
+      binds.push(await hashPassword(password));
+      sets.push(`password_hash = ?${binds.length + 2}`);
+    }
+  }
+
+  const effective = password ? 'secret' : visibility;
+  if (effective !== undefined) {
+    binds.push(effective);
+    sets.push(`visibility = ?${binds.length + 2}`);
+  }
+  if (!sets.length) return null;
+
+  const res = await env.DB.prepare(
+    `UPDATE sites SET ${sets.join(', ')} WHERE tenant_id = ?1 AND slug = ?2`,
+  ).bind(tenantId, slug, ...binds).run();
+  return res.meta.changes ? null : err(404, 'no such site');
+}
+
 const siteUrl = (env, tenantId, slug) => `https://${tenantId}.${env.ROOT_DOMAIN}/${slug}/`;
 
 async function handleAdmin(request, env, parts) {
@@ -397,11 +448,16 @@ export async function handleApi(request, env, ctx, pathname) {
 
   if (parts.length === 1 && request.method === 'GET') {
     const { results } = await env.DB.prepare(
-      `SELECT slug, title, current_version, updated_at FROM sites
-       WHERE tenant_id = ?1 ORDER BY updated_at DESC`,
+      `SELECT slug, title, current_version, updated_at, visibility,
+              password_hash IS NOT NULL AS password_protected
+       FROM sites WHERE tenant_id = ?1 ORDER BY updated_at DESC`,
     ).bind(tenantId).all();
     return json({
-      sites: results.map((s) => ({ ...s, url: siteUrl(env, tenantId, s.slug) })),
+      sites: results.map((s) => ({
+        ...s,
+        password_protected: Boolean(s.password_protected),
+        url: siteUrl(env, tenantId, s.slug),
+      })),
     });
   }
 
@@ -410,10 +466,14 @@ export async function handleApi(request, env, ctx, pathname) {
   const action = parts[2];
 
   if (!action && request.method === 'GET') {
-    const site = await env.DB.prepare(
-      'SELECT slug, title, current_version, created_at, updated_at FROM sites WHERE tenant_id = ?1 AND slug = ?2',
+    const row = await env.DB.prepare(
+      `SELECT slug, title, current_version, created_at, updated_at, visibility, password_hash
+       FROM sites WHERE tenant_id = ?1 AND slug = ?2`,
     ).bind(tenantId, slug).first();
-    if (!site) return err(404, 'no such site');
+    if (!row) return err(404, 'no such site');
+    // The hash never leaves the database; callers only need to know it is set.
+    const { password_hash: pw, ...site } = row;
+    site.password_protected = Boolean(pw);
     const { results: versions } = await env.DB.prepare(
       `SELECT version, state, bytes, file_count, created_at FROM versions
        WHERE tenant_id = ?1 AND slug = ?2 ORDER BY version DESC`,
@@ -489,12 +549,36 @@ export async function handleApi(request, env, ctx, pathname) {
     const version = await openStaging(env, tenantId, slug, { inherit: merge });
     await stageFiles(env, tenantId, slug, version, staged);
 
+    const wanted = requestedVisibility(request, url);
+    if (wanted) {
+      const failed = await setVisibility(env, tenantId, slug, wanted);
+      if (failed) return failed;
+    }
+
     if (url.searchParams.get('publish') === '0') {
       return json({ staged: staged.length, version, published: false });
     }
     const result = await publish(env, tenantId, slug);
     if (result.error) return err(400, result.error);
     return json({ ...result, url: siteUrl(env, tenantId, slug), published: true }, 201);
+  }
+
+  if (action === 'visibility' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    const failed = await setVisibility(env, tenantId, slug, {
+      visibility: body.visibility,
+      password: 'password' in body ? body.password : undefined,
+    });
+    if (failed) return failed;
+    const row = await env.DB.prepare(
+      'SELECT visibility, password_hash FROM sites WHERE tenant_id = ?1 AND slug = ?2',
+    ).bind(tenantId, slug).first();
+    return json({
+      slug,
+      visibility: row.visibility,
+      password_protected: Boolean(row.password_hash),
+      url: siteUrl(env, tenantId, slug),
+    });
   }
 
   if (action === 'publish' && request.method === 'POST') {

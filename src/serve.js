@@ -1,5 +1,6 @@
 import { ctypeFor, escapeHtml, isMarkdown, isValidSlug, normalizePath } from './util.js';
 import { renderMarkdown } from './render.js';
+import { basicAuthCredentials, usernameMatches, verifyPassword } from './password.js';
 import { CSP, RENDER_VERSION, docPage, messagePage, plainPage } from './theme.js';
 
 const INDEX_NAMES = ['index.md', 'index.markdown', 'README.md', 'readme.md'];
@@ -69,10 +70,22 @@ export function resolve(paths, rest) {
 
 async function loadSite(env, tenantId, slug) {
   const site = await env.DB.prepare(
-    'SELECT current_version, title FROM sites WHERE tenant_id = ?1 AND slug = ?2',
+    `SELECT current_version, title, visibility, password_hash, auth_user, updated_at
+     FROM sites WHERE tenant_id = ?1 AND slug = ?2`,
   ).bind(tenantId, slug).first();
   return site?.current_version == null ? null : site;
 }
+
+/** 401 that makes the browser prompt. Never cached, by anyone. */
+const askForPassword = (slug) => new Response('Password required\n', {
+  status: 401,
+  headers: {
+    'www-authenticate': `Basic realm="${slug.replace(/[^a-z0-9-]/gi, '')}", charset="UTF-8"`,
+    'content-type': 'text/plain; charset=utf-8',
+    'cache-control': 'no-store',
+    ...SECURITY_HEADERS,
+  },
+});
 
 /**
  * The live version's file list, as a path -> src_version map. A version can
@@ -112,7 +125,7 @@ function assetResponse(obj, path) {
 async function tenantIndex(env, tenantId, rootDomain) {
   const { results } = await env.DB.prepare(
     `SELECT slug, title, updated_at FROM sites
-     WHERE tenant_id = ?1 AND current_version IS NOT NULL
+     WHERE tenant_id = ?1 AND current_version IS NOT NULL AND visibility = 'public'
      ORDER BY updated_at DESC`,
   ).bind(tenantId).all();
 
@@ -165,6 +178,18 @@ export async function serveTenant(request, env, ctx, tenantId) {
   const version = site.current_version;
   const siteRoot = `/${slug}`;
 
+  // A password-protected site must never touch the shared edge cache: a cached
+  // response would be served to the next visitor with no credentials at all.
+  const protectedSite = Boolean(site.password_hash);
+  if (protectedSite) {
+    const creds = basicAuthCredentials(request);
+    if (creds === null
+      || !usernameMatches(site.auth_user, creds.user)
+      || !(await verifyPassword(creds.password, site.password_hash))) {
+      return askForPassword(slug);
+    }
+  }
+
   // Qualified by both the content version and a fingerprint of the rendering
   // code, so publishing a new version *and* deploying new markup each
   // invalidate every page of the site without an explicit purge.
@@ -173,8 +198,10 @@ export async function serveTenant(request, env, ctx, tenantId) {
     { method: 'GET' },
   );
   const cache = caches.default;
-  const hit = await cache.match(cacheKey);
-  if (hit) return hit;
+  if (!protectedSite) {
+    const hit = await cache.match(cacheKey);
+    if (hit) return hit;
+  }
 
   // Normalize the directory case too: the trailing slash is meaningful, but the
   // rest of the path still has to survive traversal checks before we trust it.
@@ -205,18 +232,20 @@ export async function serveTenant(request, env, ctx, tenantId) {
     const source = await obj.text();
     // The mount point for relative links is the document's own directory when
     // it is an index, otherwise the site root prefix its URL sits under.
-    const { html, title } = renderMarkdown(source, siteRoot);
+    const { html, title, headings } = renderMarkdown(source, siteRoot);
     const docDir = found.path.includes('/') ? found.path.slice(0, found.path.lastIndexOf('/') + 1) : '';
     response = new Response(
       docPage({
         title: title ? `${title} · ${slug}` : `${slug} · ${tenantId}`,
         contentHtml: html,
         siteRoot,
-        siteLabel: site.title || slug,
+        siteLabel: title || site.title || slug,
         docPaths: docPaths.filter(isMarkdown).sort(),
         currentPath: found.path,
         rawHref: `${siteRoot}/${found.path}`,
         rootDomain: env.ROOT_DOMAIN,
+        headings,
+        updatedAt: site.updated_at,
         canonical: `${url.origin}${siteRoot}/${docDir}`,
       }),
       {
@@ -241,7 +270,13 @@ export async function serveTenant(request, env, ctx, tenantId) {
     response = assetResponse(obj, found.path);
   }
 
-  ctx.waitUntil(cache.put(cacheKey, response.clone()));
+  if (protectedSite) {
+    // Belt and braces: no shared cache, and no browser or proxy copy either.
+    response = new Response(response.body, response);
+    response.headers.set('cache-control', 'private, no-store');
+  } else {
+    ctx.waitUntil(cache.put(cacheKey, response.clone()));
+  }
   return request.method === 'HEAD'
     ? new Response(null, { status: response.status, headers: response.headers })
     : response;

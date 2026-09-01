@@ -35,8 +35,16 @@ CREATE TABLE IF NOT EXISTS sites (
   title           TEXT,
   created_at      INTEGER NOT NULL,
   updated_at      INTEGER NOT NULL,
+  -- 'public'  listed on the tenant index, publicly readable
+  -- 'secret'  publicly readable by URL, but never listed publicly
+  visibility      TEXT NOT NULL DEFAULT 'public',
+  -- Set only for secret sites that additionally require Basic auth.
+  password_hash   TEXT,
+  -- Optional; NULL means any username is accepted.
+  auth_user       TEXT,
   PRIMARY KEY (tenant_id, slug)
 );
+CREATE INDEX IF NOT EXISTS sites_public ON sites(tenant_id, visibility, updated_at);
 
 CREATE TABLE IF NOT EXISTS versions (
   tenant_id  TEXT NOT NULL,

@@ -7,6 +7,11 @@ export const CLI_SOURCE = `#!/usr/bin/env bash
 # jmp2 — publish markdown to jmp2.io
 #
 #   jmp2 push <slug> [dir-or-file]   publish a folder (or one file) to <slug>
+#        --secret                    do not list it on your public index
+#        --password <pw>             require a password (implies --secret)
+#        --public                    list it publicly (the default)
+#   jmp2 secret <slug> [password]    make an existing site secret
+#   jmp2 public <slug>               list it publicly and drop any password
 #   jmp2 ls                          list your sites
 #   jmp2 info <slug>                 show versions for one site
 #   jmp2 rollback <slug> <version>   go back to an earlier version
@@ -35,26 +40,63 @@ token() {
 
 req() { # req <method> <path> [curl args...]
   local method="$1" path="$2"; shift 2
-  curl -sS -X "$method" "$API/_api$path" -H "Authorization: Bearer $(token)" "$@"
+  curl -sS --max-time 300 -X "$method" "$API/_api$path" \\
+    -H "Authorization: Bearer $(token)" "$@"
+}
+
+set_visibility() { # set_visibility <slug> <public|secret> [password]
+  local slug="$1" visibility="$2" password="\${3:-}"
+  # \`null\` clears an existing password; omitting the key would leave it in place.
+  local pw='null'
+  [[ -n "$password" ]] && pw="\\"$password\\""
+  req POST "/sites/$slug/visibility" -H 'content-type: application/json' \\
+    -d "{\\"visibility\\":\\"$visibility\\",\\"password\\":$pw}"
 }
 
 cmd="\${1:-}"; shift || true
 case "$cmd" in
   push)
-    slug="\${1:?usage: jmp2 push <slug> [dir-or-file]}"; src="\${2:-.}"
+    slug="\${1:?usage: jmp2 push <slug> [dir-or-file]}"; shift || true
+    src="."; visibility=""; password=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --secret)   visibility="secret"; shift ;;
+        --public)   visibility="public"; shift ;;
+        --password) password="\${2:?--password needs a value}"; visibility="secret"; shift 2 ;;
+        # Never treat an unrecognized flag as a path. An older client that
+        # silently ignored --secret would publish publicly while the caller
+        # believed the site was unlisted; failing loudly is the only safe
+        # behaviour for a flag that controls who can see something.
+        --*)        echo "unknown option: $1 (try: jmp2 help)" >&2; exit 2 ;;
+        *)          src="$1"; shift ;;
+      esac
+    done
+    query=""; [[ -n "$visibility" ]] && query="?visibility=$visibility"
+    # bash 3.2 (still the default on macOS) treats "\${arr[@]}" on an empty array
+    # as an unbound variable under \`set -u\`, so guard the expansion.
+    pwhdr=(); [[ -n "$password" ]] && pwhdr=(-H "X-Site-Password: $password")
+    pw_args=(); [[ \${#pwhdr[@]} -gt 0 ]] && pw_args=("\${pwhdr[@]}")
     if [[ -f "$src" ]]; then
       # A lone file becomes the site's index so the slug itself is the URL.
       dest="$(basename "$src")"
       [[ "$dest" == *.md || "$dest" == *.markdown ]] && dest="index.md"
       req PUT "/sites/$slug/files/$dest" --data-binary "@$src" > /dev/null
+      [[ -n "$visibility$password" ]] && set_visibility "$slug" "$visibility" "$password" > /dev/null
       req POST "/sites/$slug/publish"
     else
       [[ -d "$src" ]] || { echo "no such file or directory: $src" >&2; exit 1; }
       # A docs folder often sits inside a project, and \`push <slug>\` defaults to
       # the current directory, so keep the obvious build junk out of the upload.
-      tar czf - -C "$src" "\${EXCLUDES[@]}" . | req PUT "/sites/$slug/tarball" -T -
+      tar czf - -C "$src" "\${EXCLUDES[@]}" . \\
+        | req PUT "/sites/$slug/tarball$query" -T - \${pw_args[@]+"\${pw_args[@]}"}
     fi
     ;;
+  secret)
+    slug="\${1:?usage: jmp2 secret <slug> [password]}"
+    set_visibility "$slug" secret "\${2:-}" ;;
+  public)
+    slug="\${1:?usage: jmp2 public <slug>}"
+    set_visibility "$slug" public "" ;;
   ls)       req GET "/sites" ;;
   info)     req GET "/sites/\${1:?usage: jmp2 info <slug>}" ;;
   rm)       req DELETE "/sites/\${1:?usage: jmp2 rm <slug>}" ;;
@@ -68,7 +110,7 @@ case "$cmd" in
     req POST "/sites/$slug/rollback" -H 'content-type: application/json' -d "{\\"version\\":$version}"
     ;;
   ""|-h|--help|help)
-    sed -n '2,14p' "$0" | sed 's/^# \\{0,1\\}//'
+    sed -n '2,19p' "$0" | sed 's/^# \\{0,1\\}//'
     ;;
   *)
     echo "unknown command: $cmd (try: jmp2 help)" >&2; exit 1 ;;

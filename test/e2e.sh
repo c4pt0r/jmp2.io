@@ -70,6 +70,14 @@ cat > "$SITE/api.md" <<'MD'
 # API
 
 Back to [home](./index.md). Root-relative asset: ![logo](/img/logo.png)
+
+## Requests
+
+One section, so the outline has something to list.
+
+## Responses
+
+And a second, since a one-item table of contents is not worth rendering.
 MD
 
 cat > "$SITE/guide/index.md" <<'MD'
@@ -237,6 +245,100 @@ check "another tenant cannot see this site" 404 \
   "$(status "$APEX/_api/sites/$SLUG" -H "Authorization: Bearer $ACME")"
 check "same slug in another tenant is independent" 404 "$(status "http://acme.jmp2.io:$PORT/$SLUG/")"
 
+echo "== visibility: public is listed =="
+INDEX=$(c "$SUB/")
+# The index shows each site's title, so assert on the href, which is stable.
+contains "a public site is listed on the tenant index" "href=\"/$SLUG/\"" "$INDEX"
+contains "sites api reports visibility" '"visibility": "public"' \
+  "$(c "$APEX/_api/sites" -H "Authorization: Bearer $TOKEN")"
+
+echo "== visibility: secret is unlisted but reachable =="
+tar czf - -C "$WORK" docs > "$WORK/secret.tar.gz"
+c -T "$WORK/secret.tar.gz" "$APEX/_api/sites/quiet/tarball?visibility=secret" \
+  -H "Authorization: Bearer $TOKEN" > /dev/null
+check "a secret site is still readable by url" 200 "$(status "$SUB/quiet/")"
+check "a secret site needs no password" 200 "$(status "$SUB/quiet/api")"
+absent "a secret site is absent from the public index" 'href="/quiet/"' "$(c "$SUB/")"
+contains "a secret site is still visible to its owner" '"slug": "quiet"' \
+  "$(c "$APEX/_api/sites" -H "Authorization: Bearer $TOKEN")"
+
+echo "== visibility: a password gates everything under the site =="
+c -X POST "$APEX/_api/sites/quiet/visibility" -H "Authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' -d '{"visibility":"secret","password":"hunter2"}' > /dev/null
+check "no credentials is 401" 401 "$(status "$SUB/quiet/")"
+contains "the 401 asks for basic auth" "www-authenticate: basic" "$(hdrs "$SUB/quiet/")"
+check "a wrong password is 401" 401 "$(status -u "x:nope" "$SUB/quiet/")"
+check "the right password gets in" 200 "$(status -u "x:hunter2" "$SUB/quiet/")"
+check "any username works" 200 "$(status -u "someone-else:hunter2" "$SUB/quiet/")"
+check "assets are gated too" 401 "$(status "$SUB/quiet/img/logo.png")"
+check "raw source is gated too" 401 "$(status "$SUB/quiet/api.md")"
+check "assets open with the password" 200 "$(status -u "x:hunter2" "$SUB/quiet/img/logo.png")"
+
+echo "== a protected site never enters the shared cache =="
+PHDR=$(hdrs -u "x:hunter2" "$SUB/quiet/")
+contains "protected pages are marked no-store" "cache-control: private, no-store" "$PHDR"
+# The real risk: an authenticated fetch populating a cache that an anonymous
+# request then reads. Fetch with credentials, then immediately without.
+c -u "x:hunter2" "$SUB/quiet/" > /dev/null
+check "an anonymous request after a successful one is still 401" 401 "$(status "$SUB/quiet/")"
+
+echo "== visibility: back to public clears the password =="
+c -X POST "$APEX/_api/sites/quiet/visibility" -H "Authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' -d '{"visibility":"public","password":null}' > /dev/null
+check "no password is needed once public" 200 "$(status "$SUB/quiet/")"
+contains "and it is listed again" 'href="/quiet/"' "$(c "$SUB/")"
+
+echo "== visibility: validation and isolation =="
+check "an unknown visibility is refused" 400 \
+  "$(status -X POST "$APEX/_api/sites/quiet/visibility" -H "Authorization: Bearer $TOKEN" \
+     -H 'content-type: application/json' -d '{"visibility":"invisible"}')"
+check "a too-short password is refused" 400 \
+  "$(status -X POST "$APEX/_api/sites/quiet/visibility" -H "Authorization: Bearer $TOKEN" \
+     -H 'content-type: application/json' -d '{"visibility":"secret","password":"ab"}')"
+check "another tenant cannot change visibility" 404 \
+  "$(status -X POST "$APEX/_api/sites/quiet/visibility" -H "Authorization: Bearer $ACME" \
+     -H 'content-type: application/json' -d '{"visibility":"secret"}')"
+absent "the password hash never leaves the database" "pbkdf2" \
+  "$(c "$APEX/_api/sites/quiet" -H "Authorization: Bearer $TOKEN")"
+c -X DELETE "$APEX/_api/sites/quiet" -H "Authorization: Bearer $TOKEN" > /dev/null
+
+echo "== the CLI itself, end to end =="
+# Every other section drives the API with curl. That is exactly how a bash-3.2
+# empty-array expansion in `jmp2 push` reached production unnoticed, so this
+# section runs the real script.
+CLIBIN="$(cd "$(dirname "$0")/.." && pwd)/bin/jmp2"
+runcli() { JMP2_API="http://127.0.0.1:$PORT" JMP2_TOKEN="$TOKEN" "$CLIBIN" "$@"; }
+cliok() { # cliok <label> <expected-substring> <args...>
+  local label="$1" needle="$2"; shift 2
+  local out; out=$(runcli "$@" 2>&1) || true
+  if [[ "$out" == *"$needle"* ]]; then printf '  ok   %s\n' "$label"; pass=$((pass+1))
+  else printf '  FAIL %s\n       missing: %s\n       got: %s\n' "$label" "$needle" "${out:0:200}"; fail=$((fail+1)); fi
+}
+
+CLISITE="$WORK/clisite"; mkdir -p "$CLISITE"
+printf '# CLI site\n' > "$CLISITE/index.md"
+
+cliok "cli publishes a folder"          '"published": true' push clipub "$CLISITE"
+cliok "cli publishes a secret folder"   '"published": true' push clisecret "$CLISITE" --secret
+cliok "cli publishes with a password"   '"published": true' push clilocked "$CLISITE" --password hunter2
+cliok "cli lists sites"                 '"slug": "clipub"'  ls
+cliok "cli shows one site"              '"visibility"'      info clipub
+cliok "cli makes a site secret"         '"visibility": "secret"' secret clipub
+cliok "cli makes a site public again"   '"visibility": "public"' public clipub
+
+check "the cli's public site is listed" 200 "$(status "$SUB/clipub/")"
+contains "the cli's public site appears on the index" 'href="/clipub/"' "$(c "$SUB/")"
+absent  "the cli's secret site does not"  'href="/clisecret/"' "$(c "$SUB/")"
+check "the cli's secret site is reachable" 200 "$(status "$SUB/clisecret/")"
+check "the cli's password site is gated"   401 "$(status "$SUB/clilocked/")"
+check "the cli's password opens it"        200 "$(status -u "x:hunter2" "$SUB/clilocked/")"
+
+UNKNOWN=$(runcli push clipub "$CLISITE" --secrit 2>&1 || true)
+contains "an unknown cli option is refused" "unknown option" "$UNKNOWN"
+absent  "and is not silently used as a path" '"published"' "$UNKNOWN"
+
+for s in clipub clisecret clilocked; do runcli rm "$s" > /dev/null 2>&1 || true; done
+
 echo "== token self-management =="
 TOKENS=$(c "$APEX/_api/tokens" -H "Authorization: Bearer $TOKEN")
 contains "the token in use is marked current" '"current": true' "$TOKENS"
@@ -378,6 +480,68 @@ check "a cross-site revoke is rejected" 403 \
   "$(status -X POST "$APEX/account/tokens/$DASHID/revoke" -H "Cookie: __Host-jmp2_session=$SESS" -H 'origin: https://evil.example')"
 check "a forged session cannot reach the dashboard" 302 \
   "$(status "$APEX/account" -H 'Cookie: __Host-jmp2_session=eyJnaCI6IjQyNDIifQ.forged')"
+
+echo "== dashboard: access control =="
+runcli() { JMP2_API="http://127.0.0.1:$PORT" JMP2_TOKEN="$NEWTOK" "$CLIBIN" "$@"; }
+runcli push locked "$CLISITE" > /dev/null 2>&1
+OSUB="http://octosite.jmp2.io:$PORT"
+ACC="/account/sites/locked/visibility"
+c -X POST "$APEX$ACC" -H "Cookie: __Host-jmp2_session=$SESS" -H 'origin: https://jmp2.io' \
+  -d 'visibility=secret&auth_user=alice&password=hunter2' > /dev/null
+check "a username+password set from the dashboard gates the site" 401 "$(status "$OSUB/locked/")"
+check "the wrong username is refused" 401 "$(status -u "bob:hunter2" "$OSUB/locked/")"
+check "the right username and password get in" 200 "$(status -u "alice:hunter2" "$OSUB/locked/")"
+contains "the dashboard shows the username back" 'value="alice"' \
+  "$(c "$APEX/account" -H "Cookie: __Host-jmp2_session=$SESS")"
+
+# Saving the form again with an empty password field must not unlock the site.
+c -X POST "$APEX$ACC" -H "Cookie: __Host-jmp2_session=$SESS" -H 'origin: https://jmp2.io' \
+  -d 'visibility=secret&auth_user=alice&password=' > /dev/null
+check "an empty password field leaves the password in place" 401 "$(status "$OSUB/locked/")"
+c -X POST "$APEX$ACC" -H "Cookie: __Host-jmp2_session=$SESS" -H 'origin: https://jmp2.io' \
+  -d 'visibility=secret&auth_user=alice&password=&clear_password=1' > /dev/null
+check "removing the password is explicit and works" 200 "$(status "$OSUB/locked/")"
+
+echo "== dashboard: markdown editor =="
+ED=$(c "$APEX/account/sites/locked/edit" -H "Cookie: __Host-jmp2_session=$SESS")
+contains "the editor loads the document source" "# CLI site" "$ED"
+contains "the editor lists the site's markdown files" "index.md" "$ED"
+contains "the editor is a plain textarea" "<textarea" "$ED"
+check "a signed-out editor redirects" 302 "$(status "$APEX/account/sites/locked/edit")"
+check "editing an unknown site is 404" 404 \
+  "$(status "$APEX/account/sites/nosuch/edit" -H "Cookie: __Host-jmp2_session=$SESS")"
+
+check "saving redirects back to the editor" 302 \
+  "$(status -X POST "$APEX/account/sites/locked/edit" -H "Cookie: __Host-jmp2_session=$SESS" \
+     -H 'origin: https://jmp2.io' -d 'path=index.md&content=%23+Edited+in+the+browser')"
+contains "the edit is live" "Edited in the browser" "$(c "$OSUB/locked/")"
+contains "and the source matches" "# Edited in the browser" "$(c "$OSUB/locked/index.md")"
+check "a cross-site save is rejected" 403 \
+  "$(status -X POST "$APEX/account/sites/locked/edit" -H "Cookie: __Host-jmp2_session=$SESS" \
+     -H 'origin: https://evil.example' -d 'path=index.md&content=x')"
+contains "the previous version is still there to roll back to" '"version": 1' \
+  "$(c "$APEX/_api/sites/locked" -H "Authorization: Bearer $NEWTOK")"
+
+echo "== article template =="
+# Its own fixture: ten earlier sections mutate $SLUG, and a layout assertion
+# should not depend on which of them ran last.
+TPL="$WORK/tpl"; mkdir -p "$TPL"
+printf '# Front page\n\nintro\n' > "$TPL/index.md"
+printf '# Reference\n\nlead\n\n## Requests\n\na\n\n## Responses\n\nb\n' > "$TPL/ref.md"
+tar czf - -C "$TPL" . | c -T - "$APEX/_api/sites/tpl/tarball" -H "Authorization: Bearer $TOKEN" > /dev/null
+DOC=$(c "$SUB/tpl/")
+contains "the article has a floating rail" 'class="rail"' "$DOC"
+contains "the rail has an up link" '>../<' "$DOC"
+contains "the title is its own block" 'class="doc-title"' "$DOC"
+contains "the meta line links the source" 'class="doc-meta"' "$DOC"
+contains "multi-page sites list their pages" 'Pages' "$DOC"
+absent  "a document without sections gets no outline" 'Contents' "$DOC"
+REF=$(c "$SUB/tpl/ref")
+contains "a document with sections gets an outline" 'Contents' "$REF"
+contains "the outline links each section" 'href="#requests"' "$REF"
+contains "the outline shows section titles" '>Responses<' "$REF"
+contains "the article title is the document, not the site" '>Reference<' "$REF"
+c -X DELETE "$APEX/_api/sites/tpl" -H "Authorization: Bearer $TOKEN" > /dev/null
 
 echo "== rate limiting =="
 for i in $(seq 1 62); do status "$APEX/_api/admin/tenants" -H "Authorization: Bearer $ADMIN" > /dev/null; done

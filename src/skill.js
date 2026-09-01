@@ -108,6 +108,55 @@ curl -X POST https://${d}/_api/sites/notes/publish \\
 # -> https://<you>.${d}/notes/
 \`\`\`
 
+## Visibility
+
+Every site is one of three things. New sites are **public** unless you say
+otherwise.
+
+| State | Reachable by URL | Listed on \`<you>.${d}/\` | Needs a password |
+| --- | --- | --- | --- |
+| public | yes | yes | no |
+| secret | yes | no | no |
+| secret + password | yes | no | yes |
+
+**Secret is unlisted, not private.** Anyone who has the URL can still read it.
+Add a password when the content actually needs protecting.
+
+\`\`\`sh
+# at publish time
+tar czf - -C ./docs . | curl -T - \\
+  "https://${d}/_api/sites/handbook/tarball?visibility=secret" \\
+  -H "Authorization: Bearer $${ENV}"
+
+# with a password — sent as a header, never in the URL
+tar czf - -C ./docs . | curl -T - \\
+  https://${d}/_api/sites/handbook/tarball \\
+  -H "Authorization: Bearer $${ENV}" -H "X-Site-Password: hunter2"
+
+# or change it later
+curl -X POST https://${d}/_api/sites/handbook/visibility \\
+  -H "Authorization: Bearer $${ENV}" -H 'content-type: application/json' \\
+  -d '{"visibility":"secret","password":"hunter2"}'
+
+# back to public, dropping the password
+curl -X POST https://${d}/_api/sites/handbook/visibility \\
+  -H "Authorization: Bearer $${ENV}" -H 'content-type: application/json' \\
+  -d '{"visibility":"public","password":null}'
+\`\`\`
+
+Passwords are checked with HTTP Basic auth. A username is optional: set one from
+[your dashboard](https://${d}/account) and it must match, otherwise any username
+is accepted. Passwords are stored
+as PBKDF2-SHA256 with a per-site salt, and protected pages are never written to
+the shared edge cache, so a cached copy can never be handed to someone who did
+not authenticate. Clearing a password is explicit (\`"password": null\`) so a
+routine publish cannot unlock a site by accident.
+
+You can also set visibility, the username and the password from
+[your dashboard](https://${d}/account), which additionally has a plain editor for
+changing a document in the browser. Saving there publishes a new version, so the
+previous one stays available for rollback.
+
 ## Versions and rollback
 
 Every publish writes a new version and flips a pointer only once it is complete,
@@ -131,11 +180,12 @@ endpoint. All responses are JSON.
 | \`GET\` | \`/whoami\` | tenant, quota, bytes used |
 | \`GET\` | \`/sites\` | list your sites |
 | \`GET\` | \`/sites/:slug\` | one site with its version history |
-| \`PUT\` | \`/sites/:slug/tarball\` | stage a tar.gz — \`?merge=1\`, \`?publish=0\`, \`?strip=0\` |
+| \`PUT\` | \`/sites/:slug/tarball\` | stage a tar.gz — \`?merge=1\`, \`?publish=0\`, \`?strip=0\`, \`?visibility=\` |
 | \`PUT\` | \`/sites/:slug/files/*path\` | stage one file (body is the bytes) |
 | \`DELETE\` | \`/sites/:slug/files/*path\` | drop one file from the staged version |
 | \`POST\` | \`/sites/:slug/publish\` | make the staged version live |
 | \`POST\` | \`/sites/:slug/rollback\` | \`{"version": N}\` |
+| \`POST\` | \`/sites/:slug/visibility\` | \`{"visibility": "public"\|"secret", "password": "..."\|null}\` |
 | \`DELETE\` | \`/sites/:slug\` | delete a site and all its versions |
 | \`GET\` | \`/tokens\` | list tokens (ids and metadata only) |
 | \`POST\` | \`/tokens\` | mint another token |
@@ -161,6 +211,8 @@ file, 2000 files, 120 writes per minute.
 - **Directories redirect to a trailing slash.** \`/handbook/docs\` 301s to
   \`/handbook/docs/\`, without which relative links resolve one level too high.
 - **Unknown file types download** rather than render.
+- **Secret means unlisted, not private.** Without a password the URL is still
+  publicly readable; it is simply absent from your index.
 - **\`tar czf -\` pads its output**, which some strict gzip readers reject. This
   handles it, so piping straight into \`curl -T -\` is fine.
 
@@ -188,6 +240,10 @@ ${cli} push handbook ./docs     # publish a folder
 ${cli} push notes ./notes.md    # publish one file as its own site
 ${cli} ls                       # list sites
 ${cli} info handbook            # versions
+${cli} push handbook ./docs --secret          # unlisted
+${cli} push handbook ./docs --password hunter2  # and password protected
+${cli} secret handbook hunter2  # change an existing site
+${cli} public handbook          # list it again, dropping the password
 ${cli} rollback handbook 3
 ${cli} rm handbook
 ${cli} tokens                   # list / token-new / token-rm <id>
@@ -267,6 +323,8 @@ export function openApi(rootDomain) {
             { name: 'merge', in: 'query', schema: { type: 'string', enum: ['1'] }, description: 'overlay instead of replace' },
             { name: 'publish', in: 'query', schema: { type: 'string', enum: ['0'] }, description: 'stage without going live' },
             { name: 'strip', in: 'query', schema: { type: 'string', enum: ['0'] }, description: 'keep the wrapping directory' },
+            { name: 'visibility', in: 'query', schema: { type: 'string', enum: ['public', 'secret'] } },
+            { name: 'X-Site-Password', in: 'header', schema: { type: 'string' }, description: 'set a Basic auth password; implies visibility=secret' },
           ],
           requestBody: { required: true, content: { 'application/gzip': { schema: { type: 'string', format: 'binary' } } } },
           responses: { 201: jsonOk('published'), 400: jsonOk('bad archive'), 413: jsonOk('too large or over quota') },
@@ -294,6 +352,30 @@ export function openApi(rootDomain) {
           parameters: [slug],
           requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['version'], properties: { version: { type: 'integer' } } } } } },
           responses: { 200: jsonOk('rolled back'), 404: jsonOk('no such version') },
+        },
+      },
+      '/sites/{slug}/visibility': {
+        post: {
+          summary: 'Set whether a site is listed, and its password',
+          parameters: [slug],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    visibility: { type: 'string', enum: ['public', 'secret'] },
+                    password: {
+                      type: ['string', 'null'],
+                      description: 'null clears it; omit to leave it unchanged',
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: { 200: jsonOk('updated'), 400: jsonOk('bad visibility or password'), 404: jsonOk('no such site') },
         },
       },
       '/tokens': {
