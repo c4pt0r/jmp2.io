@@ -1,0 +1,32 @@
+{
+  "name": "jmp2",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --env dev --local",
+    "deploy": "wrangler deploy",
+    "db:local": "wrangler d1 execute jmp2 --local --file=./schema.sql",
+    "db:remote": "wrangler d1 execute jmp2 --remote --file=./schema.sql",
+    "test": "node --test test/*.test.js",
+    "test:e2e": "./test/e2e.sh",
+    "build:cli": "node scripts/build-cli.mjs",
+    "pretest": "node scripts/build-cli.mjs",
+    "setup": "node scripts/setup.mjs"
+  },
+  "dependencies": {
+    "marked": "^15.0.0"
+  },
+  "devDependencies": {
+    "wrangler": "^4.116.0"
+  },
+  "bin": {
+    "jmp2": "./bin/jmp2"
+  },
+  "description": "Publish markdown files or folders and get a public shareable URL. One Cloudflare Worker.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/c4pt0r/jmp2.io.git"
+  }
+}

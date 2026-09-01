@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# jmp2 — publish markdown to jmp2.io
+#
+#   jmp2 push <slug> [dir-or-file]   publish a folder (or one file) to <slug>
+#   jmp2 ls                          list your sites
+#   jmp2 info <slug>                 show versions for one site
+#   jmp2 rollback <slug> <version>   go back to an earlier version
+#   jmp2 rm <slug>                   delete a site
+#   jmp2 whoami                      check the current token and quota usage
+#   jmp2 tokens                      list your tokens
+#   jmp2 token-new [name]            mint another token
+#   jmp2 token-rm <id>               revoke a token
+#
+# Reads JMP2_TOKEN from the environment or ~/.jmp2/token.
+set -euo pipefail
+
+API="${JMP2_API:-https://jmp2.io}"
+
+EXCLUDES=()
+for pattern in node_modules .git .wrangler .venv __pycache__ target dist .next .DS_Store; do
+  EXCLUDES+=(--exclude "$pattern")
+done
+
+token() {
+  if [[ -n "${JMP2_TOKEN:-}" ]]; then printf '%s' "$JMP2_TOKEN"; return; fi
+  if [[ -f "$HOME/.jmp2/token" ]]; then tr -d '[:space:]' < "$HOME/.jmp2/token"; return; fi
+  echo "no token: set JMP2_TOKEN or write one to ~/.jmp2/token" >&2
+  exit 1
+}
+
+req() { # req <method> <path> [curl args...]
+  local method="$1" path="$2"; shift 2
+  curl -sS -X "$method" "$API/_api$path" -H "Authorization: Bearer $(token)" "$@"
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  push)
+    slug="${1:?usage: jmp2 push <slug> [dir-or-file]}"; src="${2:-.}"
+    if [[ -f "$src" ]]; then
+      # A lone file becomes the site's index so the slug itself is the URL.
+      dest="$(basename "$src")"
+      [[ "$dest" == *.md || "$dest" == *.markdown ]] && dest="index.md"
+      req PUT "/sites/$slug/files/$dest" --data-binary "@$src" > /dev/null
+      req POST "/sites/$slug/publish"
+    else
+      [[ -d "$src" ]] || { echo "no such file or directory: $src" >&2; exit 1; }
+      # A docs folder often sits inside a project, and `push <slug>` defaults to
+      # the current directory, so keep the obvious build junk out of the upload.
+      tar czf - -C "$src" "${EXCLUDES[@]}" . | req PUT "/sites/$slug/tarball" -T -
+    fi
+    ;;
+  ls)       req GET "/sites" ;;
+  info)     req GET "/sites/${1:?usage: jmp2 info <slug>}" ;;
+  rm)       req DELETE "/sites/${1:?usage: jmp2 rm <slug>}" ;;
+  whoami)   req GET "/whoami" ;;
+  tokens)   req GET "/tokens" ;;
+  token-new)
+    req POST "/tokens" -H 'content-type: application/json' -d "{\"name\":\"${1:-cli}\"}" ;;
+  token-rm) req DELETE "/tokens/${1:?usage: jmp2 token-rm <id>}" ;;
+  rollback)
+    slug="${1:?usage: jmp2 rollback <slug> <version>}"; version="${2:?usage: jmp2 rollback <slug> <version>}"
+    req POST "/sites/$slug/rollback" -H 'content-type: application/json' -d "{\"version\":$version}"
+    ;;
+  ""|-h|--help|help)
+    sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+    ;;
+  *)
+    echo "unknown command: $cmd (try: jmp2 help)" >&2; exit 1 ;;
+esac

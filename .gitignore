@@ -1,0 +1,11 @@
+node_modules/
+.wrangler/
+*.log
+
+# Real credentials
+.dev.vars
+.env
+
+# Deployment-specific: account_id, database_id and the domain differ per fork.
+# Start from wrangler.example.toml or run `npm run setup`.
+wrangler.toml

@@ -1,0 +1,46 @@
+# Copy to wrangler.toml and fill in, or run `npm run setup -- --domain example.com`
+# which creates the R2 bucket and D1 database and writes this file for you.
+#
+# wrangler.toml is gitignored because account_id, database_id and the domain are
+# specific to one deployment.
+
+name = "jmp2"
+main = "src/index.js"
+compatibility_date = "2026-08-01"
+
+# Cloudflare dashboard -> Workers & Pages -> Overview (right sidebar)
+account_id = "YOUR_ACCOUNT_ID"
+
+# The apex serves the docs, signup and write API; the wildcard serves tenants.
+# The zone needs a proxied DNS record for both (content is irrelevant, e.g.
+# `AAAA 100::`) — the Worker intercepts before any origin is reached.
+routes = [
+  { pattern = "example.com/*",   zone_name = "example.com" },
+  { pattern = "*.example.com/*", zone_name = "example.com" },
+]
+
+[vars]
+# Every URL, page and document is derived from this. Change it and the landing
+# page, the skill file, the OpenAPI spec and the CLI all follow.
+ROOT_DOMAIN = "example.com"
+
+[[r2_buckets]]
+binding = "SITES"
+bucket_name = "jmp2-sites"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "jmp2"
+database_id = "YOUR_DATABASE_ID"
+
+[observability]
+enabled = true
+
+# `wrangler dev` rewrites the request Host to the first configured route, which
+# collapses every tenant subdomain onto the apex and makes subdomain routing
+# untestable. This environment drops routes so the real Host survives.
+[env.dev]
+routes = []
+vars = { ROOT_DOMAIN = "example.com" }
+r2_buckets = [{ binding = "SITES", bucket_name = "jmp2-sites" }]
+d1_databases = [{ binding = "DB", database_name = "jmp2", database_id = "YOUR_DATABASE_ID" }]
