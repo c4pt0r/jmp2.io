@@ -563,6 +563,37 @@ check "and the site is gone" 404 "$(status "$OSUB2/doomed/")"
 absent "gone from the owner's list too" '"slug": "doomed"' \
   "$(c "$APEX/_api/sites" -H "Authorization: Bearer $NEWTOK")"
 
+echo "== adding a page from the editor =="
+runcli() { JMP2_API="http://127.0.0.1:$PORT" JMP2_TOKEN="$NEWTOK" "$CLIBIN" "$@"; }
+runcli push pages "$CLISITE" > /dev/null 2>&1
+OSUB3="http://octosite.jmp2.io:$PORT"
+PGURL="$APEX/account/sites/pages/pages"
+post_page() { c -X POST "$PGURL" -H "Cookie: __Host-jmp2_session=$SESS" -H 'origin: https://jmp2.io' -d "path=$1"; }
+posth()    { hdrs -X POST "$PGURL" -H "Cookie: __Host-jmp2_session=$SESS" -H 'origin: https://jmp2.io' -d "path=$1"; }
+
+contains "adding a page lands on its editor" "path=guide.md&created=1" "$(posth 'guide.md')"
+check "the new page is live" 200 "$(status "$OSUB3/pages/guide")"
+contains "it is seeded with a heading from its name" "# Guide" "$(c "$OSUB3/pages/guide.md")"
+contains "the editor now offers both documents" 'guide.md' \
+  "$(c "$APEX/account/sites/pages/edit" -H "Cookie: __Host-jmp2_session=$SESS")"
+
+contains "a missing extension is added" "path=notes.md" "$(posth 'notes')"
+posth 'docs/api.md' > /dev/null
+check "the nested page is live" 200 "$(status "$OSUB3/pages/docs/api")"
+contains "its heading comes from the file name" "# Api" "$(c "$OSUB3/pages/docs/api.md")"
+
+contains "a duplicate name is refused" "err=exists" "$(posth 'guide.md')"
+contains "an unusable name is refused" "err=name" "$(posth '../escape.md')"
+contains "an empty name is refused" "err=name" "$(posth '')"
+check "the site still has only the pages we added" 200 "$(status "$OSUB3/pages/guide")"
+check "a cross-site add is rejected" 403 \
+  "$(status -X POST "$PGURL" -H "Cookie: __Host-jmp2_session=$SESS" -H 'origin: https://evil.example' -d 'path=x.md')"
+check "a signed-out add redirects" 302 "$(status -X POST "$PGURL" -d 'path=x.md')"
+contains "editing the new page and saving works" "Rewritten" \
+  "$(c -X POST "$APEX/account/sites/pages/edit" -H "Cookie: __Host-jmp2_session=$SESS" \
+     -H 'origin: https://jmp2.io' -d 'path=guide.md&content=%23+Rewritten' -o /dev/null -w '%{http_code}' > /dev/null; c "$OSUB3/pages/guide")"
+runcli rm pages > /dev/null 2>&1
+
 echo "== editor chrome =="
 ED2=$(c "$APEX/account/sites/locked/edit" -H "Cookie: __Host-jmp2_session=$SESS")
 contains "the editor has a sticky bar" 'class="editor-bar"' "$ED2"

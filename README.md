@@ -104,7 +104,11 @@ asks the owner to type the slug — a misclick cannot get past that, and it need
 nothing the browser has to run.
 
 The editor is a `<textarea>` and a form post, with one sticky strip of chrome
-and the viewport given to the text. Saving copies the live manifest into a new
+and the viewport given to the text. New pages are added from the same row as
+the file tabs; a name without an extension gets `.md`, and the page goes live
+immediately with a heading taken from its name — the alternative is a draft
+state, and a stub the owner is about to edit is easier to explain than a
+staging area they cannot see. Saving copies the live manifest into a new
 version, overwrites the one file and flips the pointer: the same copy-on-write
 publish the API performs, so the previous version stays available for rollback.
 

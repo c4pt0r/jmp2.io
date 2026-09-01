@@ -332,11 +332,17 @@ async function editor(request, env, slug, url) {
   const obj = await env.SITES.get(objectKey(tenantId, slug, chosen.src_version, chosen.path));
   const source = obj ? await obj.text() : '';
 
-  const tabs = editable.length > 1 ? editable.map((f) =>
+  const tabs = editable.map((f) =>
     `<a href="/account/sites/${escapeHtml(slug)}/edit?path=${encodeURIComponent(f.path)}"${
-      f.path === chosen.path ? ' class="current"' : ''}>${escapeHtml(f.path)}</a>`).join('') : '';
+      f.path === chosen.path ? ' class="current"' : ''}>${escapeHtml(f.path)}</a>`).join('');
 
   const justSaved = url.searchParams.get('saved') === '1';
+  const justCreated = url.searchParams.get('created') === '1';
+  // Fixed messages keyed by code: nothing the caller sends is echoed back.
+  const problem = {
+    name: 'That is not a usable file name. Use letters, digits, dashes and slashes.',
+    exists: 'A page with that name already exists.',
+  }[url.searchParams.get('err')] || '';
   const siteUrl = `https://${tenantId}.${env.ROOT_DOMAIN}/${slug}/`;
 
   return authPage({
@@ -351,10 +357,20 @@ async function editor(request, env, slug, url) {
   </span>
   <span class="spacer"></span>
   ${justSaved ? '<span class="note">Published</span>' : ''}
+  ${justCreated ? '<span class="note">Page added</span>' : ''}
   <span class="note">v${site.current_version}</span>
 </div>
 
-${tabs ? `<div class="filetabs">${tabs}</div>` : ''}
+${problem ? `<div class="callout"><strong>${escapeHtml(problem)}</strong></div>` : ''}
+
+<div class="filetabs">
+  ${tabs}
+  <form class="newpage" method="post" action="/account/sites/${escapeHtml(slug)}/pages">
+    <input name="path" placeholder="guide.md" aria-label="New page name"
+      autocomplete="off" autocapitalize="off" spellcheck="false">
+    <button class="btn-quiet btn-sm" type="submit">Add page</button>
+  </form>
+</div>
 
 <form class="editor-form" method="post" action="/account/sites/${escapeHtml(slug)}/edit">
   <input type="hidden" name="path" value="${escapeHtml(chosen.path)}">
@@ -427,34 +443,16 @@ async function performDelete(request, env, slug) {
   return redirect('/account');
 }
 
-/** POST /account/sites/:slug/edit */
-async function saveEdit(request, env, slug) {
-  if (badOrigin(request, env)) return new Response('cross-site post rejected', { status: 403 });
-  const current = await currentTenant(request, env);
-  if (!current) return redirect('/signup');
-  if (current.tenant.disabled_at) return redirect('/account');
-  const tenantId = current.tenant.id;
-
-  const form = await request.formData().catch(() => null);
-  const path = normalizePath(String(form?.get('path') || ''));
-  const content = String(form?.get('content') ?? '');
-  if (!path || !isMarkdown(path)) return redirect(`/account/sites/${slug}/edit`);
-
-  const bytes = new TextEncoder().encode(content);
-  if (bytes.byteLength > 1024 * 1024) {
-    return authPage({
-      status: 413, rootDomain: env.ROOT_DOMAIN, title: 'Too large',
-      heading: 'Too large', bodyHtml: '<p class="lede">The editor caps a document at 1 MB.</p><p><a href="/account">Back</a></p>',
-    });
-  }
-
+/**
+ * Write one file and publish it as a new version, inheriting everything else
+ * from the current one. Returns false if the site has nothing live to inherit.
+ */
+async function publishFile(env, tenantId, slug, path, bytes) {
   const site = await env.DB.prepare(
     'SELECT current_version FROM sites WHERE tenant_id = ?1 AND slug = ?2',
   ).bind(tenantId, slug).first();
-  if (!site || site.current_version == null) return redirect('/account');
+  if (!site || site.current_version == null) return false;
 
-  // Copy the live manifest into a fresh version, overwrite the one file, then
-  // flip the pointer — the same copy-on-write publish the API performs.
   const max = await env.DB.prepare(
     'SELECT COALESCE(MAX(version), 0) AS v FROM versions WHERE tenant_id = ?1 AND slug = ?2',
   ).bind(tenantId, slug).first();
@@ -487,7 +485,75 @@ async function saveEdit(request, env, slug) {
     env.DB.prepare('UPDATE sites SET current_version = ?3, updated_at = ?4 WHERE tenant_id = ?1 AND slug = ?2')
       .bind(tenantId, slug, version, ts),
   ]);
+  return true;
+}
 
+/**
+ * POST /account/sites/:slug/pages — add a document.
+ *
+ * The new page goes live immediately with a heading taken from its name. The
+ * alternative is a draft state, and the dashboard has no concept of one; a
+ * stub page the owner is about to edit is easier to explain than a staging
+ * area they cannot see.
+ */
+async function addPage(request, env, slug) {
+  if (badOrigin(request, env)) return new Response('cross-site post rejected', { status: 403 });
+  const current = await currentTenant(request, env);
+  if (!current) return redirect('/signup');
+  if (current.tenant.disabled_at) return redirect('/account');
+  const tenantId = current.tenant.id;
+
+  const editUrl = (q) => redirect(`/account/sites/${slug}/edit${q}`);
+  const form = await request.formData().catch(() => null);
+  let raw = String(form?.get('path') || '').trim();
+  if (!raw) return editUrl('?err=name');
+  if (!/\.(md|markdown)$/i.test(raw)) raw += '.md';
+
+  const path = normalizePath(raw);
+  if (!path || !isMarkdown(path) || path.length > 200) return editUrl('?err=name');
+
+  const site = await env.DB.prepare(
+    'SELECT current_version FROM sites WHERE tenant_id = ?1 AND slug = ?2',
+  ).bind(tenantId, slug).first();
+  if (!site || site.current_version == null) return redirect('/account');
+
+  const clash = await env.DB.prepare(
+    'SELECT path FROM files WHERE tenant_id = ?1 AND slug = ?2 AND version = ?3 AND path = ?4',
+  ).bind(tenantId, slug, site.current_version, path).first();
+  if (clash) return editUrl(`?path=${encodeURIComponent(path)}&err=exists`);
+
+  const name = path.slice(path.lastIndexOf('/') + 1).replace(/\.(md|markdown)$/i, '');
+  const heading = name.replace(/[-_]+/g, ' ').replace(/^./, (c) => c.toUpperCase());
+  const stub = `# ${heading}\n\n`;
+
+  const ok = await publishFile(env, tenantId, slug, path, new TextEncoder().encode(stub));
+  if (!ok) return redirect('/account');
+  return editUrl(`?path=${encodeURIComponent(path)}&created=1`);
+}
+
+/** POST /account/sites/:slug/edit */
+async function saveEdit(request, env, slug) {
+  if (badOrigin(request, env)) return new Response('cross-site post rejected', { status: 403 });
+  const current = await currentTenant(request, env);
+  if (!current) return redirect('/signup');
+  if (current.tenant.disabled_at) return redirect('/account');
+  const tenantId = current.tenant.id;
+
+  const form = await request.formData().catch(() => null);
+  const path = normalizePath(String(form?.get('path') || ''));
+  const content = String(form?.get('content') ?? '');
+  if (!path || !isMarkdown(path)) return redirect(`/account/sites/${slug}/edit`);
+
+  const bytes = new TextEncoder().encode(content);
+  if (bytes.byteLength > 1024 * 1024) {
+    return authPage({
+      status: 413, rootDomain: env.ROOT_DOMAIN, title: 'Too large',
+      heading: 'Too large', bodyHtml: '<p class="lede">The editor caps a document at 1 MB.</p><p><a href="/account">Back</a></p>',
+    });
+  }
+
+  const ok = await publishFile(env, tenantId, slug, path, bytes);
+  if (!ok) return redirect('/account');
   return redirect(`/account/sites/${slug}/edit?path=${encodeURIComponent(path)}&saved=1`);
 }
 
@@ -501,6 +567,8 @@ export async function handleAccount(request, env, pathname) {
   const edit = /^\/account\/sites\/([a-z0-9-]{1,63})\/edit$/.exec(pathname);
   if (edit && request.method === 'GET') return editor(request, env, edit[1], new URL(request.url));
   if (edit && request.method === 'POST') return saveEdit(request, env, edit[1]);
+  const pages = /^\/account\/sites\/([a-z0-9-]{1,63})\/pages$/.exec(pathname);
+  if (pages && request.method === 'POST') return addPage(request, env, pages[1]);
   const del = /^\/account\/sites\/([a-z0-9-]{1,63})\/delete$/.exec(pathname);
   if (del && request.method === 'GET') return confirmDelete(request, env, del[1]);
   if (del && request.method === 'POST') return performDelete(request, env, del[1]);

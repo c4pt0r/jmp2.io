@@ -301,6 +301,9 @@ textarea.editor{height:calc(100vh - 15rem);min-height:22rem;font-size:.9rem;
   color:var(--muted);text-decoration:none}
 .filetabs a:hover{color:var(--fg);border-color:var(--line-strong)}
 .filetabs a.current{color:var(--fg);border-color:var(--fg)}
+.filetabs .newpage{display:flex;gap:.4rem;margin:0;margin-left:auto}
+.filetabs .newpage input{height:1.85rem;font-size:.8rem;width:9rem;
+  font-family:ui-monospace,Menlo,monospace}
 
 .hero{display:flex;gap:.75rem;flex-wrap:wrap;align-items:center;margin:2.5rem 0}
 .hero.top{margin:1.25rem 0 2.5rem}
@@ -315,6 +318,9 @@ textarea:focus{outline:2px solid var(--fg);outline-offset:-1px}
   color:var(--muted);text-decoration:none}
 .filetabs a:hover{color:var(--fg);border-color:var(--line-strong)}
 .filetabs a.current{color:var(--fg);border-color:var(--fg)}
+.filetabs .newpage{display:flex;gap:.4rem;margin:0;margin-left:auto}
+.filetabs .newpage input{height:1.85rem;font-size:.8rem;width:9rem;
+  font-family:ui-monospace,Menlo,monospace}
 details{margin:0}
 summary{cursor:pointer}
 form.access{margin:.75rem 0 .25rem;display:flex;flex-direction:column;gap:.5rem;

@@ -154,7 +154,7 @@ routine publish cannot unlock a site by accident.
 
 You can also set visibility, the username and the password from
 [your dashboard](https://${d}/account), which additionally has a plain editor for
-changing a document in the browser. Saving there publishes a new version, so the
+adding and changing documents in the browser. Saving there publishes a new version, so the
 previous one stays available for rollback.
 
 ## Versions and rollback
