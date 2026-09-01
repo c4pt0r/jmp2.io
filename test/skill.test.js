@@ -93,18 +93,35 @@ test('the CSP still admits nothing but that one script', async () => {
   assert.ok(CSP_FORM.includes("form-action 'self'"));
 });
 
-test('both themes define every colour token', async () => {
+test('dark is the default ground and light redefines every token', async () => {
   const { landingPage } = await import('../src/theme.js');
   const html = await landingPage('jmp2.io', '<p>x</p>').text();
-  const tokens = [...html.matchAll(/--([a-z0-9-]+):/g)].map((m) => m[1]);
-  const light = new Set(tokens.slice(0, tokens.indexOf('bg', 1)));
-  for (const name of ['bg', 'fg', 'muted', 'faint', 'line', 'line-strong', 'surface', 'accent']) {
-    assert.ok(light.has(name) || tokens.includes(name), `missing token --${name}`);
+  const css = html.slice(html.indexOf('<style>') + 7, html.indexOf('</style>'));
+
+  const block = (selector) => {
+    const at = css.indexOf(selector);
+    assert.notEqual(at, -1, `missing ${selector}`);
+    return css.slice(at, css.indexOf('}', at));
+  };
+  const tokens = (text) => new Set([...text.matchAll(/--([a-z0-9-]+):/g)].map((m) => m[1]));
+
+  const dark = tokens(block(':root{'));
+  const light = tokens(block(':root[data-theme="light"]{'));
+
+  for (const name of ['bg', 'fg', 'muted', 'faint', 'line', 'line-strong', 'surface', 'surface-2', 'accent', 'on-accent']) {
+    assert.ok(dark.has(name), `the default palette is missing --${name}`);
   }
-  // A dark block must exist for both the system preference and the explicit choice.
-  assert.ok(html.includes(':root:not([data-theme="light"])'), 'system dark must yield to an explicit light choice');
-  assert.ok(html.includes(':root[data-theme="dark"]'), 'the toggle must win over the system preference');
+  // A token defined in one theme and not the other is the classic bug: the
+  // page renders one theme's text on the other theme's ground.
+  assert.deepEqual([...light].sort(), [...dark].sort(), 'the two palettes must define the same tokens');
+
+  assert.match(block(':root{'), /--bg:#0[0-9a-f]/, 'the default ground should be dark');
+  assert.match(block(':root[data-theme="light"]{'), /--bg:#f|--bg:#ffffff/, 'the opt-in should be light');
+  assert.ok(!css.includes('prefers-color-scheme'),
+    'the default is a deliberate choice, not the operating system preference');
+  assert.ok(html.includes('content="dark light"'), 'form controls should follow the dark ground');
 });
+
 
 test('the render fingerprint changes when the shell does', async () => {
   const { RENDER_VERSION } = await import('../src/theme.js');

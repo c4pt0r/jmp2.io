@@ -10,9 +10,9 @@ import { escapeHtml } from './util.js';
  *
  * THEME_SCRIPT_SHA256 must match this string; a unit test enforces that.
  */
-export const THEME_SCRIPT = `(function(){var R=document.documentElement;function load(k,a){try{var v=localStorage.getItem(k);if(v)R.setAttribute(a,v)}catch(e){}}load('jmp2-theme','data-theme');load('jmp2-sidebar','data-sidebar');document.addEventListener('click',function(e){var t=e.target;if(!t||!t.closest)return;if(t.closest('[data-theme-toggle]')){var c=R.getAttribute('data-theme')||(window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var n=c==='dark'?'light':'dark';R.setAttribute('data-theme',n);try{localStorage.setItem('jmp2-theme',n)}catch(e){}}else if(t.closest('[data-sidebar-toggle]')){var s=R.getAttribute('data-sidebar')==='off'?'on':'off';R.setAttribute('data-sidebar',s);try{localStorage.setItem('jmp2-sidebar',s)}catch(e){}}})})();`;
+export const THEME_SCRIPT = `(function(){var R=document.documentElement;function load(k,a){try{var v=localStorage.getItem(k);if(v)R.setAttribute(a,v)}catch(e){}}load('jmp2-theme','data-theme');load('jmp2-sidebar','data-sidebar');document.addEventListener('click',function(e){var t=e.target;if(!t||!t.closest)return;if(t.closest('[data-theme-toggle]')){var n=R.getAttribute('data-theme')==='light'?'dark':'light';R.setAttribute('data-theme',n);try{localStorage.setItem('jmp2-theme',n)}catch(e){}}else if(t.closest('[data-sidebar-toggle]')){var s=R.getAttribute('data-sidebar')==='off'?'on':'off';R.setAttribute('data-sidebar',s);try{localStorage.setItem('jmp2-sidebar',s)}catch(e){}}})})();`;
 
-export const THEME_SCRIPT_SHA256 = 'sha256-wjVieCJ5V3llxsbCg2hQ/vN/IAo+efo2QhxFyvN5B60=';
+export const THEME_SCRIPT_SHA256 = 'sha256-NiQVOoWn7DJci1DffcH4Ycc0zUjTrEwThpwswOz+DvM=';
 
 /**
  * No external anything. Scripts are limited to the one hash above, so a page of
@@ -48,26 +48,29 @@ export const CSP_FORM = CSP.replace("form-action 'none'", "form-action 'self'");
  * explicitly chosen light) and once for an explicit choice, so the toggle wins
  * in both directions.
  */
+/**
+ * Dark is the deliberate default: the bare `:root` block carries the complete
+ * palette, and light is opt-in through the toggle. `prefers-color-scheme` is
+ * not consulted — honouring it would leave every visitor on a light OS seeing
+ * a light page, which is exactly what the default is meant to decide. The
+ * toggle is one click away and the choice is remembered.
+ *
+ * With no hue to carry meaning, links are underlined rather than coloured.
+ */
 const TOKENS = `
 :root{
+  --bg:#0d0e10; --fg:#e8eaec; --muted:#9aa0a6; --faint:#787e84;
+  --line:#26292d; --line-strong:#3d4147;
+  --surface:#15171a; --surface-2:#1d2024;
+  --accent:#e8eaec; --on-accent:#0d0e10;
+  color-scheme:dark;
+}
+:root[data-theme="light"]{
   --bg:#ffffff; --fg:#16181a; --muted:#6b7076; --faint:#8b9096;
   --line:#e3e5e8; --line-strong:#c8ccd0;
-  --surface:#f6f7f8; --surface-2:#eceef0;
+  --surface:#f7f8f9; --surface-2:#eceef0;
   --accent:#16181a; --on-accent:#ffffff;
-}
-@media (prefers-color-scheme:dark){
-  :root:not([data-theme="light"]){
-    --bg:#0d0e10; --fg:#e8eaec; --muted:#9aa0a6; --faint:#787e84;
-    --line:#26292d; --line-strong:#3a3e43;
-    --surface:#16181b; --surface-2:#1e2124;
-    --accent:#e8eaec; --on-accent:#0d0e10;
-  }
-}
-:root[data-theme="dark"]{
-  --bg:#0d0e10; --fg:#e8eaec; --muted:#9aa0a6; --faint:#787e84;
-  --line:#26292d; --line-strong:#3a3e43;
-  --surface:#16181b; --surface-2:#1e2124;
-  --accent:#e8eaec; --on-accent:#0d0e10;
+  color-scheme:light;
 }
 `;
 
@@ -85,13 +88,9 @@ a:hover{text-decoration-color:var(--fg)}
   background:var(--bg);color:var(--muted);font-size:.8rem;line-height:1;margin:0;
   cursor:pointer;display:flex;align-items:center;justify-content:center}
 .theme-toggle:hover{color:var(--fg);border-color:var(--line-strong);opacity:1}
-.theme-toggle .in-dark{display:none}
-:root[data-theme="dark"] .theme-toggle .in-dark{display:inline}
-:root[data-theme="dark"] .theme-toggle .in-light{display:none}
-@media (prefers-color-scheme:dark){
-  :root:not([data-theme="light"]) .theme-toggle .in-dark{display:inline}
-  :root:not([data-theme="light"]) .theme-toggle .in-light{display:none}
-}
+.theme-toggle .in-light{display:none}
+:root[data-theme="light"] .theme-toggle .in-light{display:inline}
+:root[data-theme="light"] .theme-toggle .in-dark{display:none}
 
 .wrap{display:grid;grid-template-columns:15rem minmax(0,1fr);min-height:100vh}
 .wrap.solo{grid-template-columns:1fr}
@@ -370,7 +369,7 @@ function shell({ title, bodyHtml, canonical }) {
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="color-scheme" content="light dark">
+<meta name="color-scheme" content="dark light">
 <title>${escapeHtml(title)}</title>
 ${canonical ? `<link rel="canonical" href="${escapeHtml(canonical)}">` : ''}
 <meta property="og:title" content="${escapeHtml(title)}">

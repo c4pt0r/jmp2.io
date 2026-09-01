@@ -105,7 +105,9 @@ contains "landing page states the api base url" "https://jmp2.io/_api" "$LAND"
 contains "landing page offers signup" 'href="/signup"' "$LAND"
 contains "landing page links the raw skill" 'href="/skill.md"' "$LAND"
 contains "landing page ships the theme toggle" 'data-theme-toggle' "$LAND"
-contains "landing page defines a dark override" '[data-theme="dark"]' "$LAND"
+contains "the default ground is dark" '--bg:#0d0e10' "$LAND"
+contains "light is available as an override" '[data-theme="light"]' "$LAND"
+absent  "the operating system does not decide the default" 'prefers-color-scheme' "$LAND"
 absent  "landing page has no colour accent" "#2563eb" "$LAND"
 
 SKILL=$(c "$APEX/skill.md")

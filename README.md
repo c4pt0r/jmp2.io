@@ -254,7 +254,10 @@ left margin: the site's other pages, then the current document's own outline.
 Below 1280px the rail collapses to a block above the article rather than
 competing with the text for width.
 
-Monochrome, with a light/dark toggle. Because no hue carries meaning, links are
+Monochrome and dark by default, with light one click away and remembered.
+`prefers-color-scheme` is deliberately not consulted: honouring it would leave
+every visitor on a light operating system seeing a light page, which is exactly
+what the default is meant to decide. Because no hue carries meaning, links are
 underlined rather than coloured.
 
 A site with more than one document gets a sidebar listing its pages, which the
