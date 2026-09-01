@@ -164,7 +164,7 @@ button.danger:hover{color:var(--fg);border-color:var(--fg);opacity:1}
 .callout{border:1px solid var(--line-strong);border-radius:8px;padding:1rem 1.25rem;margin:1.5rem 0}
 .callout pre{margin:.75rem 0 0}
 .hero{display:flex;gap:.75rem;flex-wrap:wrap;align-items:center;margin:2.5rem 0}
-.hero.top{margin:0 0 2.5rem}
+.hero.top{margin:1.25rem 0 2.5rem}
 ul.sites{list-style:none;padding:0;margin:2rem 0}
 ul.sites li{margin:.6rem 0}
 
@@ -313,16 +313,23 @@ ${links.length ? `<p>${links.map((l) => `<a href="${escapeHtml(l.href)}">${escap
  * demonstrates it at the same time.
  */
 export function landingPage(rootDomain, contentHtml) {
-  // The calls to action sit above the document: the first thing a visitor needs
-  // is a way in, not the bottom of a reference manual.
-  const body = `<div class="center wide">
-<div class="hero top">
+  const hero = `<div class="hero top">
   <a class="cta" href="/signup">Get a subdomain</a>
   <a class="cta ghost" href="/skill.md">Raw skill</a>
   <a class="cta ghost" href="/openapi.json">OpenAPI</a>
   <a class="cta ghost" href="/cli">CLI</a>
-</div>
-${contentHtml}
+</div>`;
+
+  // The calls to action belong directly under the title, above the reference
+  // material: the first thing a visitor needs is a way in. The document is
+  // rendered markdown, so the insertion point is its opening heading.
+  const closing = contentHtml.indexOf('</h1>');
+  const withHero = closing === -1
+    ? hero + contentHtml
+    : contentHtml.slice(0, closing + 5) + hero + contentHtml.slice(closing + 5);
+
+  const body = `<div class="center wide">
+${withHero}
 <div class="footer">
   <span>One subdomain per GitHub account.</span>
   <a href="/account">Dashboard</a>

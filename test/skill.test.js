@@ -111,3 +111,29 @@ test('the render fingerprint changes when the shell does', async () => {
   assert.match(RENDER_VERSION, /^[a-z0-9]+$/, 'must be URL-safe: it goes in a cache key');
   assert.ok(RENDER_VERSION.length >= 4);
 });
+
+test('the landing calls to action sit under the title, not above it', async () => {
+  const { landingPage } = await import('../src/theme.js');
+  const { renderMarkdown } = await import('../src/render.js');
+  const { skillBody } = await import('../src/skill.js');
+
+  const { html: content } = renderMarkdown(skillBody('jmp2.io'), '');
+  const page = await landingPage('jmp2.io', content).text();
+
+  const h1 = page.indexOf('<h1');
+  const h1End = page.indexOf('</h1>');
+  const hero = page.indexOf('hero top');
+  const firstPara = page.indexOf('<p>', h1End);
+
+  assert.ok(h1 !== -1 && hero !== -1, 'both the title and the hero should render');
+  assert.ok(h1 < hero, 'the hero must come after the title');
+  assert.ok(hero < firstPara, 'the hero must come before the body copy');
+  assert.ok(page.includes('href="/signup"'));
+});
+
+test('the landing page still works if the document has no h1', async () => {
+  const { landingPage } = await import('../src/theme.js');
+  const page = await landingPage('jmp2.io', '<p>no heading here</p>').text();
+  assert.ok(page.includes('hero top'), 'the hero must not be dropped');
+  assert.ok(page.indexOf('hero top') < page.indexOf('no heading here'));
+});
