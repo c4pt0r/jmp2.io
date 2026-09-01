@@ -162,9 +162,11 @@ npx wrangler secret put ADMIN_TOKEN      # mints tenants and tokens; treat as ro
 npx wrangler secret put SESSION_SECRET   # signs signup/dashboard cookies
 ```
 
-**3. GitHub OAuth**, optional. Without it `/signup` returns a clear 503 and
-everything else works; you can still onboard people by hand with the admin API.
-Create an OAuth App at <https://github.com/settings/developers>:
+**3. Sign-in providers**, all optional. Configure either, both, or neither;
+without any, `/signup` returns a clear 503 and you onboard people by hand with
+the admin API.
+
+GitHub — an OAuth App at <https://github.com/settings/developers>:
 
 | Field | Value |
 | --- | --- |
@@ -172,13 +174,23 @@ Create an OAuth App at <https://github.com/settings/developers>:
 | Authorization callback URL | `https://example.com/auth/github/callback` |
 | Allow wildcard matching | **leave off** |
 
-Wildcard matching must stay off: `*.example.com` serves content that any
-signed-up user can upload, and a wildcard redirect URI would let GitHub send
-authorization codes there.
+Google — an OAuth client ID of type *Web application* at
+<https://console.cloud.google.com/apis/credentials>:
+
+| Field | Value |
+| --- | --- |
+| Authorized JavaScript origins | `https://example.com` |
+| Authorized redirect URI | `https://example.com/auth/google/callback` |
+
+Wildcard or overly broad redirect URIs must stay off for both: `*.example.com`
+serves content any signed-up user can upload, and a wildcard redirect would let
+the provider send authorization codes there.
 
 ```sh
 npx wrangler secret put GITHUB_CLIENT_ID
 npx wrangler secret put GITHUB_CLIENT_SECRET
+npx wrangler secret put GOOGLE_CLIENT_ID
+npx wrangler secret put GOOGLE_CLIENT_SECRET
 ```
 
 **4. Deploy.**
@@ -203,9 +215,10 @@ curl -X POST https://example.com/_api/admin/tokens \
   -d '{"tenant_id":"alice","name":"laptop"}'
 ```
 
-`POST /_api/admin/tenants/:id/owner` with `{"github_login":"..."}` binds an
-invite-created tenant to a GitHub account afterwards, so it shows up in that
-person's dashboard.
+`POST /_api/admin/tenants/:id/owner` binds an invite-created tenant to a
+sign-in account afterwards, so it shows up in that person's dashboard — with
+`{"github_login":"..."}` for a handle the provider can resolve, or
+`{"provider":"google","subject":"...","label":"..."}` where it cannot.
 
 ## Configuration
 
@@ -316,7 +329,8 @@ src/render.js     markdown -> HTML, link rewriting
 src/tar.js        tar/gzip reader
 src/theme.js      page shell, CSS, CSP, theme toggle
 src/skill.js      the one document behind /, /skill.md, /llms.txt, /openapi.json
-src/oauth.js      GitHub signup flow
+src/oauth.js      signup flow, provider-agnostic
+src/providers.js  one descriptor per identity provider
 src/account.js    signed-in dashboard
 src/auth.js       signed-cookie sessions
 src/tokens.js     token minting

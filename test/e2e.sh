@@ -413,12 +413,27 @@ c -X DELETE "$APEX/_api/admin/tenants/$TENANT/owner" -H "Authorization: Bearer $
 
 echo "== signup flow =="
 check "signup page renders" 200 "$(status "$APEX/signup")"
-contains "signed-out signup offers github" '/auth/github' "$(c "$APEX/signup")"
+SIGNUP=$(c "$APEX/signup")
+contains "signed-out signup offers github" '/auth/github' "$SIGNUP"
+contains "signed-out signup offers google" '/auth/google' "$SIGNUP"
 START=$(hdrs "$APEX/auth/github")
 contains "auth start redirects to github" "location: https://github.com/login/oauth/authorize" "$START"
 contains "auth start carries a state param" "state=" "$START"
 contains "auth start sets a host-locked cookie" "set-cookie: __host-jmp2_session=" "$START"
 check "callback with a bad state is refused" 400 "$(status "$APEX/auth/github/callback?code=x&state=nope")"
+
+GSTART=$(hdrs "$APEX/auth/google")
+contains "google start redirects to google" "location: https://accounts.google.com/o/oauth2/v2/auth" "$GSTART"
+contains "google asks only for identity" "scope=openid+email" "$GSTART"
+contains "google start sets its own state cookie" "set-cookie: __host-jmp2_session=" "$GSTART"
+check "google callback with a bad state is refused" 400 "$(status "$APEX/auth/google/callback?code=x&state=nope")"
+# The provider is pinned in the signed cookie, so a state minted for one
+# provider cannot be replayed against the other.
+GS=$(printf '%s' "$GSTART" | sed -n 's/.*__host-jmp2_session=\([^;]*\).*/\1/p')
+check "a google state cannot be replayed at the github callback" 400 \
+  "$(status "$APEX/auth/github/callback?code=x&state=$(printf '%s' "$GSTART" | grep -o 'state=[^&]*' | head -1 | cut -d= -f2)" \
+     -H "Cookie: __Host-jmp2_session=$GS")"
+check "an unknown provider is not a route" 404 "$(status "$APEX/auth/gitlab")"
 check "claim without a session redirects" 302 \
   "$(status -X POST "$APEX/auth/claim" -d 'subdomain=someone')"
 check "claim with a forged cookie is refused" 302 \

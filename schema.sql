@@ -9,11 +9,14 @@ CREATE TABLE IF NOT EXISTS tenants (
   -- tenant serving while the evidence is still there to look at.
   disabled_at        INTEGER,
   disabled_reason    TEXT,
-  owner_github_id    TEXT,
-  owner_github_login TEXT
+  -- Ownership is (provider, subject) so a second identity provider needs no
+  -- schema change: 'github' + the numeric id, 'google' + the OIDC subject.
+  owner_provider     TEXT,
+  owner_subject      TEXT,
+  owner_label        TEXT
 );
-CREATE UNIQUE INDEX IF NOT EXISTS tenants_github_owner
-  ON tenants(owner_github_id) WHERE owner_github_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS tenants_owner
+  ON tenants(owner_provider, owner_subject) WHERE owner_subject IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS tokens (
   hash         TEXT PRIMARY KEY,          -- sha256 hex of the plaintext token

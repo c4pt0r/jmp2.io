@@ -70,7 +70,8 @@ test('deployment-specific and secret files are gitignored', () => {
 
 test('the dev vars example lists every secret the worker reads', () => {
   const example = read('.dev.vars.example');
-  for (const name of ['ADMIN_TOKEN', 'SESSION_SECRET', 'GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET']) {
+  for (const name of ['ADMIN_TOKEN', 'SESSION_SECRET', 'GITHUB_CLIENT_ID',
+    'GITHUB_CLIENT_SECRET', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET']) {
     assert.ok(example.includes(`${name}=`), `.dev.vars.example is missing ${name}`);
   }
 });
@@ -79,6 +80,7 @@ test('no source file hardcodes the domain any more', () => {
   for (const file of [
     'src/index.js', 'src/serve.js', 'src/api.js', 'src/oauth.js',
     'src/account.js', 'src/theme.js', 'src/tokens.js', 'src/util.js',
+    'src/providers.js',
   ]) {
     const text = read(file)
       .replace(/^\s*\*.*$/gm, '')      // block comment bodies

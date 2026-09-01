@@ -5,6 +5,7 @@ import { LIMITS as RATE, hit } from './ratelimit.js';
 import { ctypeFor, escapeHtml, isMarkdown, normalizePath, now } from './util.js';
 import { objectKey } from './serve.js';
 import { deleteSite } from './api.js';
+import { sessionIdentity } from './oauth.js';
 import { authPage } from './theme.js';
 
 const redirect = (to, headers = {}) =>
@@ -31,12 +32,13 @@ function humanWhen(seconds) {
 
 /** The signed-in tenant, or null. Also the place suspension is noticed. */
 async function currentTenant(request, env) {
-  const session = await readSession(request, env.SESSION_SECRET);
-  if (!session?.gh) return null;
+  const identity = sessionIdentity(await readSession(request, env.SESSION_SECRET));
+  if (!identity) return null;
   const tenant = await env.DB.prepare(
-    'SELECT id, quota_bytes, disabled_at, disabled_reason FROM tenants WHERE owner_github_id = ?1',
-  ).bind(session.gh).first();
-  return tenant ? { tenant, session } : null;
+    `SELECT id, quota_bytes, disabled_at, disabled_reason FROM tenants
+     WHERE owner_provider = ?1 AND owner_subject = ?2`,
+  ).bind(identity.provider, identity.subject).first();
+  return tenant ? { tenant, identity } : null;
 }
 
 async function loadDashboard(env, tenantId) {
@@ -239,7 +241,7 @@ async function createToken(request, env) {
   if (!current) return redirect('/signup');
   if (current.tenant.disabled_at) return redirect('/account');
 
-  const gate = await hit(env, `mint:${current.session.gh}`, RATE.signup);
+  const gate = await hit(env, `mint:${current.identity.provider}:${current.identity.subject}`, RATE.signup);
   if (!gate.ok) {
     return authPage({
       status: 429, title: 'Slow down', heading: 'Too many tokens',

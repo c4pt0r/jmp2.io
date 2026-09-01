@@ -5,6 +5,7 @@ import {
 import { maybeGunzip, parseTar, stripCommonPrefix } from './tar.js';
 import { mintToken } from './tokens.js';
 import { hashPassword } from './password.js';
+import { PROVIDERS } from './providers.js';
 import { LIMITS as RATE, clientIp, hit, retryHeaders } from './ratelimit.js';
 import { splitFrontmatter } from './render.js';
 import { objectKey } from './serve.js';
@@ -316,7 +317,7 @@ async function handleAdmin(request, env, parts) {
   if (parts[0] === 'tenants' && !parts[1] && request.method === 'GET') {
     const { results } = await env.DB.prepare(
       `SELECT t.id, t.name, t.created_at, t.disabled_at, t.disabled_reason,
-              t.owner_github_login, t.quota_bytes,
+              t.owner_provider, t.owner_label, t.quota_bytes,
               (SELECT COALESCE(SUM(bytes), 0) FROM (
                  SELECT DISTINCT slug, src_version, path, bytes
                  FROM files WHERE tenant_id = t.id)) AS used_bytes
@@ -345,38 +346,53 @@ async function handleAdmin(request, env, parts) {
     return json({ tenant: parts[1], disabled: true, reason: body.reason || null });
   }
 
-  // Bind a tenant to a GitHub account. Invite-created tenants have no owner, so
-  // without this they could never be managed through the self-serve signup flow.
+  // Bind a tenant to a sign-in account. Invite-created tenants have no owner,
+  // so without this they could never reach the self-serve dashboard.
   if (parts[0] === 'tenants' && parts[2] === 'owner' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
-    const login = String(body.github_login || '').trim();
-    if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(login)) {
-      return err(400, 'invalid github login');
-    }
-    const ghRes = await fetch(`https://api.github.com/users/${login}`, {
-      headers: { accept: 'application/vnd.github+json', 'user-agent': 'jmp2' },
-    });
-    if (!ghRes.ok) return err(404, 'no such github user');
-    const gh = await ghRes.json();
+    const provider = String(body.provider || (body.github_login ? 'github' : '')).toLowerCase();
+    if (!PROVIDERS[provider]) return err(400, 'unknown provider');
 
-    const held = await env.DB.prepare('SELECT id FROM tenants WHERE owner_github_id = ?1')
-      .bind(String(gh.id)).first();
+    // A handle is resolved to a stable subject where the provider offers a
+    // lookup; otherwise the subject has to be given directly.
+    let owner = null;
+    const handle = String(body.github_login || body.handle || '').trim();
+    if (handle && PROVIDERS[provider].lookup) {
+      if (PROVIDERS[provider].validHandle && !PROVIDERS[provider].validHandle(handle)) {
+        return err(400, `not a valid ${provider} handle`);
+      }
+      owner = await PROVIDERS[provider].lookup(handle);
+      if (!owner) return err(404, `no such ${provider} user`);
+    } else if (body.subject) {
+      owner = { subject: String(body.subject), label: body.label ? String(body.label) : null };
+    } else {
+      return err(400, 'give a handle this provider can resolve, or a subject');
+    }
+
+    const held = await env.DB.prepare(
+      'SELECT id FROM tenants WHERE owner_provider = ?1 AND owner_subject = ?2',
+    ).bind(provider, owner.subject).first();
     if (held && held.id !== parts[1]) {
-      return err(409, `that github account already owns ${held.id}`);
+      return err(409, `that account already owns ${held.id}`);
     }
     const res = await env.DB.prepare(
-      'UPDATE tenants SET owner_github_id = ?2, owner_github_login = ?3 WHERE id = ?1',
-    ).bind(parts[1], String(gh.id), gh.login).run();
+      'UPDATE tenants SET owner_provider = ?2, owner_subject = ?3, owner_label = ?4 WHERE id = ?1',
+    ).bind(parts[1], provider, owner.subject, owner.label).run();
     if (!res.meta.changes) return err(404, 'no such tenant');
-    return json({ tenant: parts[1], github_login: gh.login, github_id: String(gh.id) });
+    return json({
+      tenant: parts[1], provider, subject: owner.subject, label: owner.label,
+      // Kept so existing callers keep working.
+      github_login: provider === 'github' ? owner.label : undefined,
+      github_id: provider === 'github' ? owner.subject : undefined,
+    });
   }
 
   if (parts[0] === 'tenants' && parts[2] === 'owner' && request.method === 'DELETE') {
     const res = await env.DB.prepare(
-      'UPDATE tenants SET owner_github_id = NULL, owner_github_login = NULL WHERE id = ?1',
+      'UPDATE tenants SET owner_provider = NULL, owner_subject = NULL, owner_label = NULL WHERE id = ?1',
     ).bind(parts[1]).run();
     if (!res.meta.changes) return err(404, 'no such tenant');
-    return json({ tenant: parts[1], github_login: null });
+    return json({ tenant: parts[1], provider: null, subject: null });
   }
 
   if (parts[0] === 'tenants' && parts[2] === 'enable' && request.method === 'POST') {

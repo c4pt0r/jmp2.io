@@ -1,7 +1,6 @@
 # Copy to .dev.vars for `npm run dev`. Never commit the real file.
 #
-# These are the same four secrets the deployed Worker needs; in production they
-# are set with `npx wrangler secret put <NAME>` instead.
+# In production these are set with `npx wrangler secret put <NAME>` instead.
 
 # Mints tenants and tokens through /_api/admin/*. Treat as root.
 ADMIN_TOKEN=dev-admin-token-local-only
@@ -9,7 +8,17 @@ ADMIN_TOKEN=dev-admin-token-local-only
 # Signs the signup/dashboard session cookies. 48 random bytes in production.
 SESSION_SECRET=dev-session-secret-local-only
 
-# From https://github.com/settings/developers. Without these, /signup returns a
-# clear 503 and the rest of the service is unaffected.
+# Sign-in providers. Each needs both halves to be offered; configure either,
+# both, or neither. With none, /signup returns a clear 503 and the rest of the
+# service is unaffected.
+#
+#   GitHub  https://github.com/settings/developers
+#           callback https://<domain>/auth/github/callback
 GITHUB_CLIENT_ID=dev-client-id
 GITHUB_CLIENT_SECRET=dev-client-secret
+
+#   Google  https://console.cloud.google.com/apis/credentials
+#           OAuth client ID, type "Web application"
+#           callback https://<domain>/auth/google/callback
+GOOGLE_CLIENT_ID=dev-google-id
+GOOGLE_CLIENT_SECRET=dev-google-secret

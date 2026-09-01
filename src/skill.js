@@ -44,8 +44,8 @@ tar czf - ./docs | curl -T - https://${d}/_api/sites/handbook/tarball \\
 
 ## Getting a token
 
-Sign in with GitHub at [${d}/signup](https://${d}/signup), pick a subdomain, and
-copy the token it shows once. Store it:
+Sign in at [${d}/signup](https://${d}/signup) with GitHub or Google, pick a
+subdomain, and copy the token it shows once. Store it:
 
 \`\`\`sh
 mkdir -p ~/.${cli} && chmod 700 ~/.${cli}

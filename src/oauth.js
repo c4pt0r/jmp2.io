@@ -1,12 +1,9 @@
-import { clearCookie, readSession, setCookie, sign, verify } from './auth.js';
+import { clearCookie, readSession, setCookie, sign } from './auth.js';
 import { mintToken } from './tokens.js';
 import { LIMITS, clientIp, hit } from './ratelimit.js';
 import { RESERVED_SUBDOMAINS, escapeHtml, isValidTenantId, now } from './util.js';
 import { authPage } from './theme.js';
-
-const GITHUB_AUTHORIZE = 'https://github.com/login/oauth/authorize';
-const GITHUB_TOKEN = 'https://github.com/login/oauth/access_token';
-const GITHUB_USER = 'https://api.github.com/user';
+import { PROVIDERS, enabledProviders, providerConfigured } from './providers.js';
 
 const STATE_TTL = 600;      // 10 minutes to complete the round trip
 // Long enough that the dashboard is not a re-login every visit. The cookie is
@@ -14,109 +11,101 @@ const STATE_TTL = 600;      // 10 minutes to complete the round trip
 // (suspension, ownership) is re-read from the database on every page.
 const SESSION_TTL = 86400;
 
-const configured = (env) => Boolean(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET && env.SESSION_SECRET);
-
 const redirect = (to, headers = {}) =>
   new Response(null, { status: 302, headers: { location: to, ...headers } });
+
+const callbackUrl = (env, provider) => `https://${env.ROOT_DOMAIN}/auth/${provider}/callback`;
 
 const notConfigured = () => authPage({
   status: 503,
   title: 'Signup unavailable',
   heading: 'Signup is not configured',
-  bodyHtml: '<p class="lede">This deployment has no GitHub OAuth credentials set. Ask the operator for an invite instead.</p>',
+  bodyHtml: '<p class="lede">This deployment has no sign-in provider set up. Ask the operator for an invite instead.</p>',
 });
 
-/** GET /auth/github — start the round trip. */
-async function start(env) {
-  const state = crypto.randomUUID();
-  const cookie = await sign({ state, exp: now() + STATE_TTL }, env.SESSION_SECRET);
-  const url = new URL(GITHUB_AUTHORIZE);
-  url.searchParams.set('client_id', env.GITHUB_CLIENT_ID);
-  url.searchParams.set('redirect_uri', `https://${env.ROOT_DOMAIN}/auth/github/callback`);
-  url.searchParams.set('state', state);
-  url.searchParams.set('scope', ''); // identity only; no repo or email access
-  url.searchParams.set('allow_signup', 'false');
-  return redirect(url.toString(), { 'set-cookie': setCookie(cookie, STATE_TTL) });
+const failed = (heading, detail) => authPage({
+  status: 400, title: 'Sign-in failed', heading,
+  bodyHtml: `<p class="lede">${escapeHtml(detail)}</p><p><a href="/signup">Back to signup</a></p>`,
+  headers: { 'set-cookie': clearCookie() },
+});
+
+/**
+ * The signed-in identity, tolerating the shape used before a second provider
+ * existed so nobody is logged out by the upgrade.
+ */
+export function sessionIdentity(session) {
+  if (!session) return null;
+  if (session.p && session.s) return { provider: session.p, subject: session.s, label: session.login };
+  if (session.gh) return { provider: 'github', subject: session.gh, label: session.login };
+  return null;
 }
 
-/** GET /auth/github/callback — verify state, exchange the code, remember who it is. */
-async function callback(request, env, url) {
+const ownerOf = (env, identity) => env.DB.prepare(
+  'SELECT id FROM tenants WHERE owner_provider = ?1 AND owner_subject = ?2',
+).bind(identity.provider, identity.subject).first();
+
+/** GET /auth/:provider — start the round trip. */
+async function start(env, provider) {
+  const state = crypto.randomUUID();
+  // The provider is carried in the signed cookie, not just the path: the
+  // callback has to know which one it is talking to before it trusts the URL.
+  const cookie = await sign({ state, p: provider, exp: now() + STATE_TTL }, env.SESSION_SECRET);
+  return redirect(
+    PROVIDERS[provider].authorizeUrl(env, { redirectUri: callbackUrl(env, provider), state }),
+    { 'set-cookie': setCookie(cookie, STATE_TTL) },
+  );
+}
+
+/** GET /auth/:provider/callback — verify state, exchange the code, remember who it is. */
+async function callback(request, env, provider, url) {
   const code = url.searchParams.get('code');
   const state = url.searchParams.get('state');
   const pending = await readSession(request, env.SESSION_SECRET);
 
-  if (!code || !state || !pending?.state || pending.state !== state) {
-    return authPage({
-      status: 400, title: 'Sign-in failed', heading: 'Sign-in failed',
-      bodyHtml: '<p class="lede">That sign-in link expired or did not match. Start again.</p><p><a href="/signup">Back to signup</a></p>',
-      headers: { 'set-cookie': clearCookie() },
-    });
+  if (!code || !state || !pending?.state || pending.state !== state || pending.p !== provider) {
+    return failed('Sign-in failed', 'That sign-in link expired or did not match. Start again.');
   }
 
-  const tokenRes = await fetch(GITHUB_TOKEN, {
-    method: 'POST',
-    headers: { accept: 'application/json', 'content-type': 'application/json', 'user-agent': 'jmp2' },
-    body: JSON.stringify({
-      client_id: env.GITHUB_CLIENT_ID,
-      client_secret: env.GITHUB_CLIENT_SECRET,
-      code,
-      redirect_uri: `https://${env.ROOT_DOMAIN}/auth/github/callback`,
-    }),
+  const result = await PROVIDERS[provider].identify(env, {
+    code, redirectUri: callbackUrl(env, provider),
   });
-  const tokenBody = await tokenRes.json().catch(() => ({}));
-  if (!tokenBody.access_token) {
-    return authPage({
-      status: 502, title: 'Sign-in failed', heading: 'GitHub would not issue a token',
-      bodyHtml: `<p class="lede">${escapeHtml(tokenBody.error_description || 'Try again in a moment.')}</p><p><a href="/signup">Back to signup</a></p>`,
-      headers: { 'set-cookie': clearCookie() },
-    });
-  }
+  if (result.error) return failed('Sign-in failed', result.error);
 
-  const userRes = await fetch(GITHUB_USER, {
-    headers: {
-      authorization: `Bearer ${tokenBody.access_token}`,
-      accept: 'application/vnd.github+json',
-      'user-agent': 'jmp2',
-    },
-  });
-  const user = await userRes.json().catch(() => ({}));
-  if (!user.id) {
-    return authPage({
-      status: 502, title: 'Sign-in failed', heading: 'Could not read your GitHub account',
-      bodyHtml: '<p class="lede">Try again in a moment.</p><p><a href="/signup">Back to signup</a></p>',
-      headers: { 'set-cookie': clearCookie() },
-    });
-  }
-
-  // The GitHub access token is deliberately not kept: identity is all we wanted.
+  // The provider's access token is deliberately not kept: identity is all we
+  // wanted, and a token we do not hold is a token that cannot leak.
   const session = await sign(
-    { gh: String(user.id), login: user.login, exp: now() + SESSION_TTL },
+    { p: provider, s: result.subject, login: result.label, exp: now() + SESSION_TTL },
     env.SESSION_SECRET,
   );
   return redirect('/signup', { 'set-cookie': setCookie(session, SESSION_TTL) });
 }
 
-const signedOutPage = (rootDomain) => authPage({
-  rootDomain,
-  title: 'Get a subdomain',
-  heading: 'Claim your subdomain',
-  bodyHtml: `<p class="lede">Sign in with GitHub, pick a name, and push markdown to it.
-    We read your public account id and nothing else — no repository access, no email.</p>
-  <p><a class="button" href="/auth/github">Sign in with GitHub</a></p>`,
-});
-
-function claimFormPage(login, rootDomain, error) {
+const signedOutPage = (env) => {
+  const buttons = enabledProviders(env).map((name, i) =>
+    `<a class="btn${i ? ' btn-quiet' : ''}" href="/auth/${name}">Continue with ${PROVIDERS[name].label}</a>`,
+  ).join('');
   return authPage({
-    rootDomain,
+    rootDomain: env.ROOT_DOMAIN,
+    title: 'Get a subdomain',
+    heading: 'Claim your subdomain',
+    bodyHtml: `<p class="lede">Sign in, pick a name, and push markdown to it. We read the
+  account identifier and nothing else — no repositories, no contacts, no mail.</p>
+  <p class="actions">${buttons}</p>`,
+  });
+};
+
+function claimFormPage(env, label, error) {
+  return authPage({
+    rootDomain: env.ROOT_DOMAIN,
     title: 'Pick a subdomain',
-    heading: `Hi ${login}`,
-    bodyHtml: `${error ? `<p class="error">${escapeHtml(error)}</p>` : ''}
+    heading: `Hi ${label}`,
+    bodyHtml: `${error ? `<div class="callout"><strong>${escapeHtml(error)}</strong></div>` : ''}
   <p class="lede">Pick the subdomain you want. This is permanent, so choose carefully.</p>
   <form method="post" action="/auth/claim">
     <label>
       <input name="subdomain" placeholder="your-name" maxlength="63"
              pattern="[a-z0-9][a-z0-9-]{1,62}" required autofocus>
-      <span class="suffix">.${escapeHtml(rootDomain)}</span>
+      <span class="suffix">.${escapeHtml(env.ROOT_DOMAIN)}</span>
     </label>
     <button type="submit">Claim it</button>
   </form>
@@ -130,33 +119,29 @@ function issuedPage(tenantId, rootDomain, token) {
     rootDomain,
     title: 'You are set up',
     heading: `${tenantId}.${rootDomain} is yours`,
-    bodyHtml: `<p class="lede">Copy this token now. It is shown once and cannot be recovered — mint a new one if you lose it.</p>
-  <pre><code>${escapeHtml(token)}</code></pre>
+    bodyHtml: `<div class="callout"><strong>Copy this token now.</strong> It is shown once and cannot be recovered.
+  <pre><code>${escapeHtml(token)}</code></pre></div>
   <h2>Publish something</h2>
   <pre><code>mkdir -p ~/.${escapeHtml(cli)} &amp;&amp; echo '${escapeHtml(token)}' > ~/.${escapeHtml(cli)}/token
 chmod 600 ~/.${escapeHtml(cli)}/token
 
 tar czf - ./docs | curl -T - https://${escapeHtml(rootDomain)}/_api/sites/handbook/tarball \\
   -H "Authorization: Bearer ${escapeHtml(token)}"</code></pre>
-  <p>Then it is live at <a href="https://${escapeHtml(tenantId)}.${escapeHtml(rootDomain)}/handbook/">${escapeHtml(tenantId)}.${escapeHtml(rootDomain)}/handbook/</a>.</p>
-  <p><a href="/account">Go to your dashboard</a></p>`,
+  <p class="actions"><a class="btn" href="/account">Go to your dashboard</a></p>`,
   });
 }
 
 /** GET /signup — one page that adapts to what we know about the visitor. */
 async function signup(request, env) {
-  if (!configured(env)) return notConfigured();
-  const session = await readSession(request, env.SESSION_SECRET);
-  if (!session?.gh) return signedOutPage(env.ROOT_DOMAIN);
-
-  const owned = await env.DB.prepare('SELECT id FROM tenants WHERE owner_github_id = ?1')
-    .bind(session.gh).first();
-  return owned ? redirect('/account') : claimFormPage(session.login || 'there', env.ROOT_DOMAIN);
+  if (!enabledProviders(env).length) return notConfigured();
+  const identity = sessionIdentity(await readSession(request, env.SESSION_SECRET));
+  if (!identity) return signedOutPage(env);
+  return (await ownerOf(env, identity)) ? redirect('/account') : claimFormPage(env, identity.label || 'there');
 }
 
 /** POST /auth/claim — create the tenant and hand over the first token. */
 async function claim(request, env) {
-  if (!configured(env)) return notConfigured();
+  if (!enabledProviders(env).length) return notConfigured();
 
   // SameSite=Lax already blocks cross-site form posts; this makes it explicit.
   const origin = request.headers.get('origin');
@@ -164,8 +149,8 @@ async function claim(request, env) {
     return authPage({ status: 403, title: 'Blocked', heading: 'Blocked', bodyHtml: '<p class="lede">Cross-site form post rejected.</p>' });
   }
 
-  const session = await readSession(request, env.SESSION_SECRET);
-  if (!session?.gh) return redirect('/signup');
+  const identity = sessionIdentity(await readSession(request, env.SESSION_SECRET));
+  if (!identity) return redirect('/signup');
 
   const gate = await hit(env, `signup:${clientIp(request)}`, LIMITS.signup);
   if (!gate.ok) {
@@ -177,31 +162,26 @@ async function claim(request, env) {
 
   const form = await request.formData().catch(() => null);
   const wanted = String(form?.get('subdomain') || '').trim().toLowerCase();
+  const label = identity.label || 'there';
 
   if (!isValidTenantId(wanted)) {
-    const why = RESERVED_SUBDOMAINS.has(wanted)
+    return claimFormPage(env, label, RESERVED_SUBDOMAINS.has(wanted)
       ? 'That name is reserved.'
-      : 'Use 2-63 characters: lowercase letters, digits, and hyphens, not starting or ending with a hyphen.';
-    return claimFormPage(session.login || 'there', env.ROOT_DOMAIN, why);
+      : 'Use 2-63 characters: lowercase letters, digits, and hyphens, not starting or ending with a hyphen.');
   }
 
   const taken = await env.DB.prepare('SELECT id FROM tenants WHERE id = ?1').bind(wanted).first();
-  if (taken) {
-    return claimFormPage(session.login || 'there', env.ROOT_DOMAIN, `${wanted}.${env.ROOT_DOMAIN} is taken.`);
-  }
-
-  const already = await env.DB.prepare('SELECT id FROM tenants WHERE owner_github_id = ?1')
-    .bind(session.gh).first();
-  if (already) return redirect('/account');
+  if (taken) return claimFormPage(env, label, `${wanted}.${env.ROOT_DOMAIN} is taken.`);
+  if (await ownerOf(env, identity)) return redirect('/account');
 
   try {
     await env.DB.prepare(
-      `INSERT INTO tenants (id, name, created_at, owner_github_id, owner_github_login)
-       VALUES (?1, ?2, ?3, ?4, ?5)`,
-    ).bind(wanted, session.login || null, now(), session.gh, session.login || null).run();
+      `INSERT INTO tenants (id, name, created_at, owner_provider, owner_subject, owner_label)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
+    ).bind(wanted, identity.label || null, now(), identity.provider, identity.subject, identity.label || null).run();
   } catch {
-    // Unique index on id or owner_github_id lost a race.
-    return claimFormPage(session.login || 'there', env.ROOT_DOMAIN, 'That name was just taken. Try another.');
+    // A unique index on the id or the owner lost a race.
+    return claimFormPage(env, label, 'That name was just taken. Try another.');
   }
 
   const { token } = await mintToken(env, wanted, 'signup');
@@ -210,15 +190,14 @@ async function claim(request, env) {
 
 /** GET /auth/mint — recovery path for someone who lost every token they had. */
 async function mint(request, env) {
-  if (!configured(env)) return notConfigured();
-  const session = await readSession(request, env.SESSION_SECRET);
-  if (!session?.gh) return redirect('/auth/github');
+  if (!enabledProviders(env).length) return notConfigured();
+  const identity = sessionIdentity(await readSession(request, env.SESSION_SECRET));
+  if (!identity) return redirect('/signup');
 
-  const owned = await env.DB.prepare('SELECT id FROM tenants WHERE owner_github_id = ?1')
-    .bind(session.gh).first();
+  const owned = await ownerOf(env, identity);
   if (!owned) return redirect('/signup');
 
-  const gate = await hit(env, `mint:${session.gh}`, LIMITS.signup);
+  const gate = await hit(env, `mint:${identity.provider}:${identity.subject}`, LIMITS.signup);
   if (!gate.ok) {
     return authPage({ status: 429, title: 'Slow down', heading: 'Too many tokens', bodyHtml: '<p class="lede">Try again later.</p>' });
   }
@@ -230,18 +209,18 @@ async function mint(request, env) {
 /** Routes served on the apex for the browser-facing signup flow. */
 export async function handleAuth(request, env, pathname) {
   if (pathname === '/signup') return signup(request, env);
-  if (pathname === '/auth/github' && request.method === 'GET') {
-    return configured(env) ? start(env) : notConfigured();
-  }
-  if (pathname === '/auth/github/callback' && request.method === 'GET') {
-    return configured(env) ? callback(request, env, new URL(request.url)) : notConfigured();
-  }
   if (pathname === '/auth/claim' && request.method === 'POST') return claim(request, env);
   if (pathname === '/auth/mint' && request.method === 'GET') return mint(request, env);
-  if (pathname === '/auth/signout') {
-    return redirect('/', { 'set-cookie': clearCookie() });
+  if (pathname === '/auth/signout') return redirect('/', { 'set-cookie': clearCookie() });
+
+  const match = /^\/auth\/([a-z]+)(\/callback)?$/.exec(pathname);
+  if (match && request.method === 'GET') {
+    const [, provider, isCallback] = match;
+    if (!PROVIDERS[provider]) return null;
+    if (!providerConfigured(env, provider) || !env.SESSION_SECRET) return notConfigured();
+    return isCallback
+      ? callback(request, env, provider, new URL(request.url))
+      : start(env, provider);
   }
   return null;
 }
-
-export const AUTH_PATHS = ['/signup', '/auth/github', '/auth/github/callback', '/auth/claim', '/auth/mint', '/auth/signout'];

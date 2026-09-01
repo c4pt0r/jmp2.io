@@ -115,17 +115,26 @@ Done. Remaining steps, in order:
      npx wrangler secret put ADMIN_TOKEN
      npx wrangler secret put SESSION_SECRET
 
-3. GitHub OAuth (optional — without it /signup returns a clear 503 and everything
-   else works). Create an OAuth App at https://github.com/settings/developers:
+3. Sign-in providers (all optional — without any, /signup returns a clear 503
+   and everything else works). Configure either, both, or neither.
 
+   GitHub, an OAuth App at https://github.com/settings/developers:
      Homepage URL              https://${domain}
      Authorization callback    https://${domain}/auth/github/callback
-     Allow wildcard matching   leave OFF — *.${domain} serves untrusted user
-                               content, and a wildcard redirect would let OAuth
-                               codes be sent there
+
+   Google, a Web application client at
+   https://console.cloud.google.com/apis/credentials:
+     Authorized origin         https://${domain}
+     Authorized redirect URI   https://${domain}/auth/google/callback
+
+   Keep redirect URIs exact for both. *.${domain} serves content any signed-up
+   user can upload, and a wildcard redirect would let a provider send
+   authorization codes there.
 
      npx wrangler secret put GITHUB_CLIENT_ID
      npx wrangler secret put GITHUB_CLIENT_SECRET
+     npx wrangler secret put GOOGLE_CLIENT_ID
+     npx wrangler secret put GOOGLE_CLIENT_SECRET
 
 4. Deploy:
 
