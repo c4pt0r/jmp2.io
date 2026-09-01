@@ -1,17 +1,18 @@
 import { escapeHtml } from './util.js';
 
 /**
- * The only script on any page: it applies the saved theme before first paint
- * and handles the toggle. It is pinned by hash in the CSP, so this exact source
- * is the only script that can ever execute — an injected `<script>` has a
- * different hash and is still blocked, which keeps almost all of the value of
- * `script-src 'none'` while allowing a real toggle.
+ * The only script on any page: it applies the reader's saved preferences —
+ * theme, and whether the sidebar is collapsed — before first paint, and handles
+ * both toggles. It is pinned by hash in the CSP, so this exact source is the
+ * only script that can ever execute: an injected `<script>` has a different
+ * hash and is still blocked, which keeps almost all of the value of
+ * `script-src 'none'` while allowing real controls.
  *
  * THEME_SCRIPT_SHA256 must match this string; a unit test enforces that.
  */
-export const THEME_SCRIPT = `(function(){var K='jmp2-theme',R=document.documentElement;try{var t=localStorage.getItem(K);if(t)R.setAttribute('data-theme',t)}catch(e){}document.addEventListener('click',function(e){var b=e.target&&e.target.closest&&e.target.closest('[data-theme-toggle]');if(!b)return;var c=R.getAttribute('data-theme')||(window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var n=c==='dark'?'light':'dark';R.setAttribute('data-theme',n);try{localStorage.setItem(K,n)}catch(e){}})})();`;
+export const THEME_SCRIPT = `(function(){var R=document.documentElement;function load(k,a){try{var v=localStorage.getItem(k);if(v)R.setAttribute(a,v)}catch(e){}}load('jmp2-theme','data-theme');load('jmp2-sidebar','data-sidebar');document.addEventListener('click',function(e){var t=e.target;if(!t||!t.closest)return;if(t.closest('[data-theme-toggle]')){var c=R.getAttribute('data-theme')||(window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var n=c==='dark'?'light':'dark';R.setAttribute('data-theme',n);try{localStorage.setItem('jmp2-theme',n)}catch(e){}}else if(t.closest('[data-sidebar-toggle]')){var s=R.getAttribute('data-sidebar')==='off'?'on':'off';R.setAttribute('data-sidebar',s);try{localStorage.setItem('jmp2-sidebar',s)}catch(e){}}})})();`;
 
-export const THEME_SCRIPT_SHA256 = 'sha256-RMn5pnuVZG6C5CKNeEI5SXgnNlcogKou6yzzDULoiNA=';
+export const THEME_SCRIPT_SHA256 = 'sha256-wjVieCJ5V3llxsbCg2hQ/vN/IAo+efo2QhxFyvN5B60=';
 
 /**
  * No external anything. Scripts are limited to the one hash above, so a page of
@@ -93,6 +94,18 @@ a:hover{text-decoration-color:var(--fg)}
 }
 
 .wrap{display:grid;grid-template-columns:15rem minmax(0,1fr);min-height:100vh}
+.wrap.solo{grid-template-columns:1fr}
+:root[data-sidebar="off"] .wrap{grid-template-columns:1fr}
+:root[data-sidebar="off"] .sidebar{display:none}
+/* With no sidebar the column has the whole width to sit in, so centre it —
+   otherwise the text clings to the left edge of a wide window. */
+.wrap.solo main,:root[data-sidebar="off"] main{margin-inline:auto;padding-inline:1.5rem}
+.sidebar-toggle{position:fixed;top:.9rem;right:3.4rem;z-index:10;
+  width:2rem;height:2rem;padding:0;margin:0;border:1px solid var(--line);
+  border-radius:50%;background:var(--bg);color:var(--muted);
+  font-size:.9rem;line-height:1;cursor:pointer;
+  display:flex;align-items:center;justify-content:center}
+.sidebar-toggle:hover{color:var(--fg);border-color:var(--line-strong);opacity:1}
 .sidebar{background:var(--surface);border-right:1px solid var(--line);padding:1.5rem 1rem;overflow-y:auto}
 .sidebar .site{font-weight:600;font-size:.95rem;display:block;margin-bottom:1rem;
   color:var(--fg);word-break:break-word;text-decoration:none}
@@ -235,6 +248,12 @@ textarea:focus{outline:2px solid var(--fg);outline-offset:-1px}
   gap:.75rem;margin:.9rem 0 0;align-items:end}
 .access .full{grid-column:1/-1;display:flex;gap:.75rem;flex-wrap:wrap;align-items:center}
 .choices{display:flex;gap:1rem;flex-wrap:wrap}
+.access .spacer{flex:1 1 auto}
+/* Destructive actions are a link, not a button: they lead to a confirmation
+   rather than doing anything, and should not look like the save beside them. */
+.danger-link{font-size:.82rem;color:var(--muted);text-decoration:underline;
+  text-decoration-color:var(--line-strong)}
+.danger-link:hover{color:var(--fg);text-decoration-color:var(--fg)}
 
 .rows{display:flex;flex-direction:column;gap:0;
   border:1px solid var(--line);border-radius:10px;overflow:hidden}
@@ -251,7 +270,32 @@ textarea:focus{outline:2px solid var(--fg);outline-offset:-1px}
   padding:1.5rem;color:var(--muted);font-size:.9rem}
 .empty pre{margin:.85rem 0 0}
 
-.filetabs{display:flex;gap:.4rem;flex-wrap:wrap;margin:1.25rem 0 .75rem}
+/* ---- editor ---------------------------------------------------------------
+   A writing surface, not a form: the chrome is one sticky strip and the text
+   gets the rest of the viewport. The strip reserves room on the right because
+   the theme toggle is fixed in that corner and would otherwise sit on top of
+   the publish button. */
+.center.bare{padding-top:0;max-width:58rem}
+.editor-bar{position:sticky;top:0;z-index:5;background:var(--bg);
+  display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;
+  padding:.9rem 3rem .9rem 0;border-bottom:1px solid var(--line);margin-bottom:1rem}
+.editor-bar .back{color:var(--muted);text-decoration:none;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.editor-bar .back:hover{color:var(--fg)}
+.editor-bar .where{display:flex;align-items:baseline;gap:.4rem;min-width:0;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9rem}
+.editor-bar .where .site{color:var(--muted);text-decoration:none;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.editor-bar .where .file{color:var(--fg);font-weight:600}
+.editor-bar .spacer{flex:1 1 auto}
+.editor-bar .note{font-size:.8rem;color:var(--muted)}
+.editor-form{display:flex;flex-direction:column;gap:.75rem;margin:0}
+textarea.editor{height:calc(100vh - 15rem);min-height:22rem;font-size:.9rem;
+  line-height:1.75;padding:1.25rem 1.35rem}
+.editor-foot{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;
+  font-size:.8rem;color:var(--muted)}
+
+.filetabs{display:flex;gap:.4rem;flex-wrap:wrap;margin:0}
 .filetabs a{font-size:.8rem;font-family:ui-monospace,Menlo,monospace;
   padding:.3rem .6rem;border:1px solid var(--line);border-radius:6px;
   color:var(--muted);text-decoration:none}
@@ -370,12 +414,19 @@ const byIndexFirst = (a, b) => {
 };
 
 export function docPage({ title, contentHtml, siteRoot, siteLabel, docPaths, currentPath, rawHref, canonical, rootDomain }) {
+  // A one-document site has nothing to navigate between, so it gets no sidebar
+  // and no toggle for a sidebar that is not there.
+  const solo = docPaths.length <= 1;
   const nav = navHtml(docPaths, siteRoot, currentPath);
-  const body = `<div class="wrap">
-<aside class="sidebar">
+  const aside = solo ? '' : `<aside class="sidebar">
   <a class="site" href="${escapeHtml(siteRoot)}/">${escapeHtml(siteLabel)}</a>
   ${nav}
-</aside>
+</aside>`;
+  const toggle = solo ? '' : `<button class="sidebar-toggle" data-sidebar-toggle type="button"
+  aria-label="Show or hide the page list" title="Show or hide the page list">&#9776;</button>`;
+
+  const body = `${toggle}<div class="wrap${solo ? ' solo' : ''}">
+${aside}
 <main>
 ${contentHtml}
 <div class="footer">
@@ -388,11 +439,14 @@ ${contentHtml}
 }
 
 /** Shell for the signup and dashboard pages: same look, plus a form CSP. */
-export function authPage({ status = 200, title, heading, bodyHtml, headers = {}, wide = false, rootDomain = '' }) {
-  const body = `<div class="center${wide ? ' wide' : ''}">
-<h1>${escapeHtml(heading)}</h1>
+export function authPage({
+  status = 200, title, heading, bodyHtml, headers = {},
+  wide = false, rootDomain = '', bare = false,
+}) {
+  const body = `<div class="center${wide ? ' wide' : ''}${bare ? ' bare' : ''}">
+${heading ? `<h1>${escapeHtml(heading)}</h1>` : ''}
 ${bodyHtml}
-<div class="footer"><a href="/">${escapeHtml(rootDomain || 'home')}</a></div>
+${bare ? '' : `<div class="footer"><a href="/">${escapeHtml(rootDomain || 'home')}</a></div>`}
 </div>`;
   return new Response(shell({ title, bodyHtml: body }), {
     status,

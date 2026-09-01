@@ -171,6 +171,17 @@ async function deleteVersion(env, tenantId, slug, version) {
   ]);
 }
 
+/** Delete a site and every version it owns. */
+export async function deleteSite(env, tenantId, slug) {
+  const { results: versions } = await env.DB.prepare(
+    'SELECT version FROM versions WHERE tenant_id = ?1 AND slug = ?2',
+  ).bind(tenantId, slug).all();
+  for (const v of versions) await deleteVersion(env, tenantId, slug, v.version);
+  const res = await env.DB.prepare('DELETE FROM sites WHERE tenant_id = ?1 AND slug = ?2')
+    .bind(tenantId, slug).run();
+  return res.meta.changes > 0;
+}
+
 async function publish(env, tenantId, slug) {
   const staging = await env.DB.prepare(
     `SELECT version FROM versions
@@ -482,12 +493,7 @@ export async function handleApi(request, env, ctx, pathname) {
   }
 
   if (!action && request.method === 'DELETE') {
-    const { results: versions } = await env.DB.prepare(
-      'SELECT version FROM versions WHERE tenant_id = ?1 AND slug = ?2',
-    ).bind(tenantId, slug).all();
-    for (const v of versions) await deleteVersion(env, tenantId, slug, v.version);
-    await env.DB.prepare('DELETE FROM sites WHERE tenant_id = ?1 AND slug = ?2')
-      .bind(tenantId, slug).run();
+    await deleteSite(env, tenantId, slug);
     return json({ deleted: slug });
   }
 

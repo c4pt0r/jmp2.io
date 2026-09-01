@@ -93,15 +93,20 @@ query string: query strings end up in access logs, shell history and `Referer`.
 
 ## The dashboard
 
-`/account` lists every site the signed-in owner has, secret ones included, with
-its visibility, size and version. From there they can change access (public or
-secret, username, password) and edit any markdown document in a plain textarea.
+`/account` lists every site the signed-in owner has, secret ones included, as
+cards rather than table rows — a row cannot carry its own controls without the
+columns fighting. Because the palette is monochrome, state reads as shape: a
+filled pill means listed, an outline means unlisted, a dot marks a password.
 
-The editor is a `<textarea>` and a form post — the CSP admits only the theme
-toggle, so there is no script to lean on. Saving copies the live manifest into a
-new version, overwrites the one file and flips the pointer: the same
-copy-on-write publish the API performs, so the previous version stays available
-for rollback.
+Deleting a site is irreversible and the CSP admits no script, so there is no
+confirm dialog to lean on. The confirmation page states what disappears and
+asks the owner to type the slug — a misclick cannot get past that, and it needs
+nothing the browser has to run.
+
+The editor is a `<textarea>` and a form post, with one sticky strip of chrome
+and the viewport given to the text. Saving copies the live manifest into a new
+version, overwrites the one file and flips the pointer: the same copy-on-write
+publish the API performs, so the previous version stays available for rollback.
 
 An empty password field means "leave it alone", not "remove it". Removing a
 password is a separate checkbox, so saving a username cannot silently unlock a
@@ -248,6 +253,11 @@ competing with the text for width.
 Monochrome, with a light/dark toggle. Because no hue carries meaning, links are
 underlined rather than coloured.
 
+A site with more than one document gets a sidebar listing its pages, which the
+reader can collapse; the preference is remembered. A one-document site gets
+neither — there is nothing to navigate between, and no control for a sidebar
+that is not there.
+
 The toggle needs script, which the CSP would otherwise forbid outright. Rather
 than opening `script-src` to `'unsafe-inline'`, the one small inline script is
 **pinned by SHA-256 hash**: that exact source may run and nothing else, so an
@@ -346,8 +356,7 @@ Schema changes after the first deploy go in `migrations/` and are applied to bot
 ## Not built yet
 
 Syntax highlighting, mermaid, OG preview images, private sites, custom domains,
-deleting a site from the dashboard (it is irreversible and there is no
-confirmation dialog without script, so it stays in the CLI).
+per-document permalinks with previews.
 
 ## License
 

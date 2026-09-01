@@ -524,9 +524,51 @@ contains "the previous version is still there to roll back to" '"version": 1' \
 
 echo "== article template =="
 DOC=$(c "$SUB/$SLUG/")
-contains "the article keeps its sidebar" 'class="sidebar"' "$DOC"
+contains "a multi-page site keeps its sidebar" 'class="sidebar"' "$DOC"
 contains "the sidebar lists the site's pages" "/$SLUG/guide/" "$DOC"
-contains "the sidebar links back to the site root" "class=\"site\"" "$DOC"
+contains "the sidebar links back to the site root" 'class="site"' "$DOC"
+contains "and offers a collapse control" 'class="sidebar-toggle"' "$DOC"
+
+# A site with one document has nothing to navigate between.
+SOLO="$WORK/solo"; mkdir -p "$SOLO"; printf '# Only page\n\ntext\n' > "$SOLO/index.md"
+tar czf - -C "$SOLO" . | c -T - "$APEX/_api/sites/solo/tarball" -H "Authorization: Bearer $TOKEN" > /dev/null
+SOLOPAGE=$(c "$SUB/solo/")
+check "a one-document site renders" 200 "$(status "$SUB/solo/")"
+absent "a one-document site has no sidebar" 'class="sidebar"' "$SOLOPAGE"
+absent "and no control for a sidebar that is not there" 'class="sidebar-toggle"' "$SOLOPAGE"
+contains "it still renders the document" "Only page" "$SOLOPAGE"
+contains "and the column is centred, not left-hugging" "solo main" "$(c "$SUB/solo/")"
+c -X DELETE "$APEX/_api/sites/solo" -H "Authorization: Bearer $TOKEN" > /dev/null
+
+echo "== deleting a site from the dashboard =="
+runcli() { JMP2_API="http://127.0.0.1:$PORT" JMP2_TOKEN="$NEWTOK" "$CLIBIN" "$@"; }
+runcli push doomed "$CLISITE" > /dev/null 2>&1
+OSUB2="http://octosite.jmp2.io:$PORT"
+check "the site is live before we start" 200 "$(status "$OSUB2/doomed/")"
+CONF=$(c "$APEX/account/sites/doomed/delete" -H "Cookie: __Host-jmp2_session=$SESS")
+contains "the confirmation names the site" "doomed" "$CONF"
+contains "and asks the owner to type it" 'name="confirm"' "$CONF"
+check "a wrong confirmation deletes nothing" 200 \
+  "$(status -X POST "$APEX/account/sites/doomed/delete" -H "Cookie: __Host-jmp2_session=$SESS" \
+     -H 'origin: https://jmp2.io' -d 'confirm=wrong')"
+check "the site survives a wrong confirmation" 200 "$(status "$OSUB2/doomed/")"
+check "a cross-site delete is rejected" 403 \
+  "$(status -X POST "$APEX/account/sites/doomed/delete" -H "Cookie: __Host-jmp2_session=$SESS" \
+     -H 'origin: https://evil.example' -d 'confirm=doomed')"
+check "the site survives that too" 200 "$(status "$OSUB2/doomed/")"
+check "the right confirmation redirects back" 302 \
+  "$(status -X POST "$APEX/account/sites/doomed/delete" -H "Cookie: __Host-jmp2_session=$SESS" \
+     -H 'origin: https://jmp2.io' -d 'confirm=doomed')"
+check "and the site is gone" 404 "$(status "$OSUB2/doomed/")"
+absent "gone from the owner's list too" '"slug": "doomed"' \
+  "$(c "$APEX/_api/sites" -H "Authorization: Bearer $NEWTOK")"
+
+echo "== editor chrome =="
+ED2=$(c "$APEX/account/sites/locked/edit" -H "Cookie: __Host-jmp2_session=$SESS")
+contains "the editor has a sticky bar" 'class="editor-bar"' "$ED2"
+contains "the bar shows the file being edited" 'class="file"' "$ED2"
+contains "the textarea fills the surface" 'class="editor"' "$ED2"
+absent  "the editor does not repeat the slug as a heading" "<h1>locked</h1>" "$ED2"
 
 echo "== dashboard markup =="
 DASH2=$(c "$APEX/account" -H "Cookie: __Host-jmp2_session=$SESS")

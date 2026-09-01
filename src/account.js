@@ -4,6 +4,7 @@ import { hashPassword } from './password.js';
 import { LIMITS as RATE, hit } from './ratelimit.js';
 import { ctypeFor, escapeHtml, isMarkdown, normalizePath, now } from './util.js';
 import { objectKey } from './serve.js';
+import { deleteSite } from './api.js';
 import { authPage } from './theme.js';
 
 const redirect = (to, headers = {}) =>
@@ -113,6 +114,8 @@ function siteCard(s, tenantId, rootDomain) {
       <div class="full">
         <button class="btn-sm" type="submit">Save</button>
         ${s.locked ? '<label class="opt"><input type="checkbox" name="clear_password" value="1"> Remove the password</label>' : ''}
+        <span class="spacer"></span>
+        <a class="danger-link" href="/account/sites/${escapeHtml(s.slug)}/delete">Delete this site</a>
       </div>
     </form>
   </details>
@@ -329,36 +332,99 @@ async function editor(request, env, slug, url) {
   const obj = await env.SITES.get(objectKey(tenantId, slug, chosen.src_version, chosen.path));
   const source = obj ? await obj.text() : '';
 
-  const tabs = editable.map((f) =>
+  const tabs = editable.length > 1 ? editable.map((f) =>
     `<a href="/account/sites/${escapeHtml(slug)}/edit?path=${encodeURIComponent(f.path)}"${
-      f.path === chosen.path ? ' class="current"' : ''}>${escapeHtml(f.path)}</a>`).join('');
+      f.path === chosen.path ? ' class="current"' : ''}>${escapeHtml(f.path)}</a>`).join('') : '';
 
-  const saved = url.searchParams.get('saved') === '1'
-    ? '<div class="callout"><strong>Published.</strong> The previous version is still there to roll back to.</div>'
-    : '';
+  const justSaved = url.searchParams.get('saved') === '1';
+  const siteUrl = `https://${tenantId}.${env.ROOT_DOMAIN}/${slug}/`;
 
   return authPage({
     rootDomain: env.ROOT_DOMAIN,
-    wide: true,
-    title: `Editing ${slug}`,
-    heading: slug,
-    bodyHtml: `${saved}
-<div class="summary">
-  <a class="host" href="https://${escapeHtml(tenantId)}.${escapeHtml(env.ROOT_DOMAIN)}/${escapeHtml(slug)}/">${escapeHtml(tenantId)}.${escapeHtml(env.ROOT_DOMAIN)}/${escapeHtml(slug)}/</a>
-  <span class="stat">v${site.current_version}</span>
-  <span class="stat">${editable.length} document${editable.length === 1 ? '' : 's'}</span>
+    bare: true,
+    title: `${chosen.path} · ${slug}`,
+    heading: '',
+    bodyHtml: `<div class="editor-bar">
+  <a class="back" href="/account" title="Back to your sites">&larr;</a>
+  <span class="where">
+    <a class="site" href="${escapeHtml(siteUrl)}">${escapeHtml(slug)}/</a><span class="file">${escapeHtml(chosen.path)}</span>
+  </span>
+  <span class="spacer"></span>
+  ${justSaved ? '<span class="note">Published</span>' : ''}
+  <span class="note">v${site.current_version}</span>
 </div>
-<div class="filetabs">${tabs}</div>
-<form method="post" action="/account/sites/${escapeHtml(slug)}/edit">
+
+${tabs ? `<div class="filetabs">${tabs}</div>` : ''}
+
+<form class="editor-form" method="post" action="/account/sites/${escapeHtml(slug)}/edit">
   <input type="hidden" name="path" value="${escapeHtml(chosen.path)}">
-  <textarea name="content" rows="26" spellcheck="false" autofocus>${escapeHtml(source)}</textarea>
-  <p class="actions">
+  <textarea class="editor" name="content" spellcheck="false" autofocus>${escapeHtml(source)}</textarea>
+  <div class="editor-foot">
     <button type="submit">Publish changes</button>
-    <a class="btn btn-quiet" href="/account">Back to sites</a>
-  </p>
-  <p class="fine">Saving publishes a new version of the whole site.</p>
+    <a class="btn btn-quiet" href="${escapeHtml(siteUrl)}">View site</a>
+    <span class="spacer"></span>
+    <span>Publishing writes a new version; the previous one stays available to roll back to.</span>
+  </div>
 </form>`,
   });
+}
+
+/**
+ * GET /account/sites/:slug/delete — confirmation.
+ *
+ * Deleting is irreversible and the CSP admits no script, so there is no
+ * confirm dialog to lean on. The page states exactly what disappears and asks
+ * the owner to type the slug: a misclick cannot get past that, and it needs
+ * nothing the browser has to run.
+ */
+async function confirmDelete(request, env, slug, error) {
+  const current = await currentTenant(request, env);
+  if (!current) return redirect('/signup');
+  const tenantId = current.tenant.id;
+
+  const site = await env.DB.prepare(
+    `SELECT s.slug, s.title, s.current_version,
+            (SELECT COUNT(*) FROM versions v WHERE v.tenant_id = s.tenant_id AND v.slug = s.slug) AS versions,
+            (SELECT COUNT(*) FROM files f WHERE f.tenant_id = s.tenant_id AND f.slug = s.slug
+               AND f.version = s.current_version) AS files
+     FROM sites s WHERE s.tenant_id = ?1 AND s.slug = ?2`,
+  ).bind(tenantId, slug).first();
+  if (!site) return redirect('/account');
+
+  return authPage({
+    rootDomain: env.ROOT_DOMAIN,
+    title: `Delete ${slug}`,
+    heading: `Delete ${slug}?`,
+    bodyHtml: `${error ? `<div class="callout"><strong>${escapeHtml(error)}</strong></div>` : ''}
+<p class="lede">This removes <code>${escapeHtml(slug)}</code> and everything in it. There is
+no undo, and the URL becomes available for anyone to claim.</p>
+<div class="rows">
+  <div class="row"><span class="id">${escapeHtml(site.slug)}</span>
+    <span class="meta">${site.files ?? 0} file${site.files === 1 ? '' : 's'} · ${site.versions} version${site.versions === 1 ? '' : 's'}${site.title && site.title !== site.slug ? ` · ${escapeHtml(site.title)}` : ''}</span></div>
+</div>
+<form method="post" action="/account/sites/${escapeHtml(slug)}/delete">
+  <label class="field"><span>Type <code>${escapeHtml(slug)}</code> to confirm</span>
+    <input name="confirm" autocomplete="off" autocapitalize="off" spellcheck="false" autofocus></label>
+  <p class="actions">
+    <button class="danger" type="submit">Delete permanently</button>
+    <a class="btn btn-quiet" href="/account">Keep it</a>
+  </p>
+</form>`,
+  });
+}
+
+/** POST /account/sites/:slug/delete */
+async function performDelete(request, env, slug) {
+  if (badOrigin(request, env)) return new Response('cross-site post rejected', { status: 403 });
+  const current = await currentTenant(request, env);
+  if (!current) return redirect('/signup');
+
+  const form = await request.formData().catch(() => null);
+  if (String(form?.get('confirm') || '').trim() !== slug) {
+    return confirmDelete(request, env, slug, 'That did not match, so nothing was deleted.');
+  }
+  await deleteSite(env, current.tenant.id, slug);
+  return redirect('/account');
 }
 
 /** POST /account/sites/:slug/edit */
@@ -435,6 +501,9 @@ export async function handleAccount(request, env, pathname) {
   const edit = /^\/account\/sites\/([a-z0-9-]{1,63})\/edit$/.exec(pathname);
   if (edit && request.method === 'GET') return editor(request, env, edit[1], new URL(request.url));
   if (edit && request.method === 'POST') return saveEdit(request, env, edit[1]);
+  const del = /^\/account\/sites\/([a-z0-9-]{1,63})\/delete$/.exec(pathname);
+  if (del && request.method === 'GET') return confirmDelete(request, env, del[1]);
+  if (del && request.method === 'POST') return performDelete(request, env, del[1]);
   if (pathname.startsWith('/account')) {
     return new Response(null, { status: 405, headers: { allow: 'GET, POST' } });
   }
