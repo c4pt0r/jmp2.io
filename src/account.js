@@ -62,79 +62,96 @@ async function loadDashboard(env, tenantId) {
   return { sites: sites.results, tokens: tokens.results, usedBytes: usage?.b ?? 0 };
 }
 
+function siteCard(s, tenantId, rootDomain) {
+  const url = `https://${tenantId}.${rootDomain}/${s.slug}/`;
+  const live = s.current_version != null;
+  const secret = s.visibility !== 'public';
+
+  // In a monochrome palette state has to read as shape: a filled pill is
+  // listed, an outline is unlisted, a dot marks a password.
+  const pill = s.locked
+    ? '<span class="pill"><span class="dot"></span>Password</span>'
+    : secret
+      ? '<span class="pill">Unlisted</span>'
+      : '<span class="pill listed">Listed</span>';
+
+  const facts = [
+    live ? `v${s.current_version}` : 'draft',
+    `${s.file_count ?? 0} file${s.file_count === 1 ? '' : 's'}`,
+    humanBytes(s.bytes ?? 0),
+    humanWhen(s.updated_at),
+  ].map((f) => `<span>${escapeHtml(f)}</span>`).join('');
+
+  const action = `/account/sites/${escapeHtml(s.slug)}/visibility`;
+  return `<div class="card">
+  <div class="card-top">
+    <div class="card-id">
+      <div>${live
+        ? `<a class="name" href="${escapeHtml(url)}">${escapeHtml(s.slug)}</a>`
+        : `<span class="name">${escapeHtml(s.slug)}</span>`} ${pill}</div>
+      ${s.title && s.title !== s.slug ? `<div class="sub">${escapeHtml(s.title)}</div>` : ''}
+      <div class="card-facts">${facts}</div>
+    </div>
+    <div class="actions">
+      ${live ? `<a class="btn btn-quiet btn-sm" href="/account/sites/${escapeHtml(s.slug)}/edit">Edit</a>` : ''}
+      ${live ? `<a class="btn btn-quiet btn-sm" href="${escapeHtml(url)}">Open</a>` : ''}
+    </div>
+  </div>
+
+  <details class="disclose">
+    <summary>Who can see this</summary>
+    <form method="post" action="${action}" class="access">
+      <div class="full choices">
+        <label class="opt"><input type="radio" name="visibility" value="public"${secret ? '' : ' checked'}> Listed on your index</label>
+        <label class="opt"><input type="radio" name="visibility" value="secret"${secret ? ' checked' : ''}> Unlisted</label>
+      </div>
+      <label class="field"><span>Username (optional)</span>
+        <input name="auth_user" value="${escapeHtml(s.auth_user || '')}" autocomplete="off" placeholder="anyone"></label>
+      <label class="field"><span>Password</span>
+        <input name="password" type="password" autocomplete="new-password"
+          placeholder="${s.locked ? 'set — type to replace' : 'none'}"></label>
+      <div class="full">
+        <button class="btn-sm" type="submit">Save</button>
+        ${s.locked ? '<label class="opt"><input type="checkbox" name="clear_password" value="1"> Remove the password</label>' : ''}
+      </div>
+    </form>
+  </details>
+</div>`;
+}
+
 function sitesSection(sites, tenantId, rootDomain) {
   if (!sites.length) {
-    return `<p class="lede">Nothing published yet. Push a folder and it appears here.</p>
+    return `<div class="empty">Nothing published yet. Push a folder and it appears here.
 <pre><code>tar czf - ./docs | curl -T - https://${escapeHtml(rootDomain)}/_api/sites/handbook/tarball \\
-  -H "Authorization: Bearer $JMP2_TOKEN"</code></pre>`;
+  -H "Authorization: Bearer $TOKEN"</code></pre></div>`;
   }
-  const rows = sites.map((s) => {
-    const url = `https://${tenantId}.${rootDomain}/${s.slug}/`;
-    const live = s.current_version != null;
-    const secret = s.visibility !== 'public';
-    // Say what each state actually means, rather than showing a bare label:
-    // "secret" is easy to read as "nobody can reach it", which it is not.
-    const badge = s.locked
-      ? '<span class="tag">password</span><div class="sub">needs the password</div>'
-      : secret
-        ? '<span class="tag">secret</span><div class="sub">link only, unlisted</div>'
-        : '<span class="tag on">public</span><div class="sub">listed on your index</div>';
-    const access = `<details><summary class="sub">Access</summary>
-  <form method="post" action="/account/sites/${escapeHtml(s.slug)}/visibility" class="access">
-    <label class="radio"><input type="radio" name="visibility" value="public"${secret ? '' : ' checked'}> Public</label>
-    <label class="radio"><input type="radio" name="visibility" value="secret"${secret ? ' checked' : ''}> Secret</label>
-    <div class="fields">
-      <input name="auth_user" placeholder="username (optional)" value="${escapeHtml(s.auth_user || '')}" autocomplete="off">
-      <input name="password" type="password" placeholder="${s.locked ? 'password set — type to change' : 'password (optional)'}" autocomplete="new-password">
-    </div>
-    <label class="radio"><input type="checkbox" name="clear_password" value="1"> Remove the password</label>
-    <button type="submit">Save access</button>
-  </form></details>`;
-    return `<tr>
-  <td>${live ? `<a href="${escapeHtml(url)}">${escapeHtml(s.slug)}</a>` : escapeHtml(s.slug)}
-      ${s.title && s.title !== s.slug ? `<div class="sub">${escapeHtml(s.title)}</div>` : ''}
-      ${live ? `<div class="sub"><a href="/account/sites/${escapeHtml(s.slug)}/edit">edit</a></div>` : ''}</td>
-  <td>${badge}</td>
-  <td>${live ? `v${s.current_version}` : '<span class="sub">draft</span>'}</td>
-  <td>${s.file_count ?? 0}</td>
-  <td>${humanBytes(s.bytes ?? 0)}</td>
-  <td class="sub">${escapeHtml(humanWhen(s.updated_at))}</td>
-  <td>${access}</td>
-</tr>`;
-  }).join('');
-  return `<table>
-<thead><tr><th>Site</th><th>Visibility</th><th>Version</th><th>Files</th><th>Size</th><th>Updated</th><th></th></tr></thead>
-<tbody>${rows}</tbody></table>
-<p class="fine">Secret means unlisted, not private: without a password the URL is
-still readable by anyone who has it.</p>`;
+  return `<div class="cards">${sites.map((s) => siteCard(s, tenantId, rootDomain)).join('')}</div>
+<p class="fine">Unlisted means it is kept off your index, not that it is private:
+without a password the URL is still readable by anyone who has it.</p>`;
 }
 
 function tokensSection(tokens) {
-  const rows = tokens.map((t) => `<tr>
-  <td><code>${escapeHtml(t.id || '—')}</code>
-      ${t.name ? `<div class="sub">${escapeHtml(t.name)}</div>` : ''}</td>
-  <td class="sub">${escapeHtml(humanWhen(t.created_at))}</td>
-  <td class="sub">${escapeHtml(humanWhen(t.last_used_at))}</td>
-  <td>${t.revoked_at
-    ? '<span class="sub">revoked</span>'
+  const rows = tokens.map((t) => `<div class="row${t.revoked_at ? ' gone' : ''}">
+  <div>
+    <div class="id">${escapeHtml(t.id || '—')}</div>
+    <div class="meta">${escapeHtml(t.name || 'unnamed')} · created ${escapeHtml(humanWhen(t.created_at))} · last used ${escapeHtml(humanWhen(t.last_used_at))}</div>
+  </div>
+  ${t.revoked_at
+    ? '<span class="meta">revoked</span>'
     : `<form method="post" action="/account/tokens/${escapeHtml(t.id)}/revoke" class="inline">
-         <button class="danger" type="submit">Revoke</button></form>`}</td>
-</tr>`).join('');
-  return `<table>
-<thead><tr><th>Token</th><th>Created</th><th>Last used</th><th></th></tr></thead>
-<tbody>${rows}</tbody></table>
-<form method="post" action="/account/tokens" class="inline">
-  <input type="hidden" name="name" value="dashboard">
-  <button type="submit">Mint a new token</button>
-</form>`;
+         <button class="danger btn-sm" type="submit">Revoke</button></form>`}
+</div>`).join('');
+  return `<div class="rows">${rows}</div>`;
 }
 
 function dashboardHtml({ tenant, rootDomain, sites, tokens, usedBytes, freshToken }) {
   const pct = Math.min(100, Math.round((usedBytes / tenant.quota_bytes) * 100));
   const home = `https://${tenant.id}.${rootDomain}/`;
+  const listed = sites.filter((s) => s.visibility === 'public' && s.current_version != null).length;
 
   const suspended = tenant.disabled_at
-    ? `<p class="error">This subdomain is suspended${tenant.disabled_reason ? `: ${escapeHtml(tenant.disabled_reason)}` : ''}.</p>`
+    ? `<div class="callout"><strong>This subdomain is suspended.</strong>${
+        tenant.disabled_reason ? ` ${escapeHtml(tenant.disabled_reason)}` : ''}</div>`
     : '';
 
   const minted = freshToken
@@ -145,25 +162,41 @@ function dashboardHtml({ tenant, rootDomain, sites, tokens, usedBytes, freshToke
     : '';
 
   return `${suspended}${minted}
-<p class="lede">Your sites live at <a href="${escapeHtml(home)}">${escapeHtml(tenant.id)}.${escapeHtml(rootDomain)}</a>.</p>
-
-<div class="meter" title="${usedBytes} of ${tenant.quota_bytes} bytes">
-  <div class="meter-fill" style="width:${pct}%"></div>
+<div class="summary">
+  <a class="host" href="${escapeHtml(home)}">${escapeHtml(tenant.id)}.${escapeHtml(rootDomain)}</a>
+  <span class="stat">${sites.length} site${sites.length === 1 ? '' : 's'}, ${listed} listed</span>
+  <span class="stat">${humanBytes(usedBytes)} of ${humanBytes(tenant.quota_bytes)}</span>
+  <div class="meter" title="${usedBytes} of ${tenant.quota_bytes} bytes">
+    <div class="meter-fill" style="width:${pct}%"></div>
+  </div>
 </div>
-<p class="sub">${humanBytes(usedBytes)} of ${humanBytes(tenant.quota_bytes)} used · ${sites.length} site${sites.length === 1 ? '' : 's'}</p>
 
-<h2>Sites</h2>
-${sitesSection(sites, tenant.id, rootDomain)}
+<div class="section">
+  <div class="section-head"><h2>Sites</h2></div>
+  ${sitesSection(sites, tenant.id, rootDomain)}
+</div>
 
-<h2>Tokens</h2>
-<p class="sub">Tokens are stored hashed, so the value is only ever shown once. Revoking takes effect immediately.</p>
-${tokensSection(tokens)}
+<div class="section">
+  <div class="section-head">
+    <h2>Tokens</h2>
+    <form method="post" action="/account/tokens" class="inline">
+      <input type="hidden" name="name" value="dashboard">
+      <button class="btn-quiet btn-sm" type="submit">New token</button>
+    </form>
+  </div>
+  ${tokensSection(tokens)}
+  <p class="fine">Tokens are stored hashed, so the value is shown once. Revoking takes effect immediately.</p>
+</div>
 
-<h2>Publish</h2>
-<pre><code>tar czf - ./docs | curl -T - https://${escapeHtml(rootDomain)}/_api/sites/handbook/tarball \\
-  -H "Authorization: Bearer $JMP2_TOKEN"</code></pre>
-
-<p><a href="/auth/signout">Sign out</a></p>`;
+<div class="section">
+  <div class="section-head"><h2>Publish</h2></div>
+  <pre><code>tar czf - ./docs | curl -T - https://${escapeHtml(rootDomain)}/_api/sites/handbook/tarball \\
+  -H "Authorization: Bearer $TOKEN"</code></pre>
+  <p class="actions">
+    <a class="btn btn-quiet btn-sm" href="https://${escapeHtml(rootDomain)}/">Docs</a>
+    <a class="btn btn-quiet btn-sm" href="/auth/signout">Sign out</a>
+  </p>
+</div>`;
 }
 
 /** GET /account */
@@ -301,7 +334,8 @@ async function editor(request, env, slug, url) {
       f.path === chosen.path ? ' class="current"' : ''}>${escapeHtml(f.path)}</a>`).join('');
 
   const saved = url.searchParams.get('saved') === '1'
-    ? '<p class="sub">Saved and published.</p>' : '';
+    ? '<div class="callout"><strong>Published.</strong> The previous version is still there to roll back to.</div>'
+    : '';
 
   return authPage({
     rootDomain: env.ROOT_DOMAIN,
@@ -309,17 +343,20 @@ async function editor(request, env, slug, url) {
     title: `Editing ${slug}`,
     heading: slug,
     bodyHtml: `${saved}
-<p class="lede">Editing <code>${escapeHtml(chosen.path)}</code>. Saving publishes a new
-version of the whole site; the previous one stays available for rollback.</p>
+<div class="summary">
+  <a class="host" href="https://${escapeHtml(tenantId)}.${escapeHtml(env.ROOT_DOMAIN)}/${escapeHtml(slug)}/">${escapeHtml(tenantId)}.${escapeHtml(env.ROOT_DOMAIN)}/${escapeHtml(slug)}/</a>
+  <span class="stat">v${site.current_version}</span>
+  <span class="stat">${editable.length} document${editable.length === 1 ? '' : 's'}</span>
+</div>
 <div class="filetabs">${tabs}</div>
 <form method="post" action="/account/sites/${escapeHtml(slug)}/edit">
   <input type="hidden" name="path" value="${escapeHtml(chosen.path)}">
   <textarea name="content" rows="26" spellcheck="false" autofocus>${escapeHtml(source)}</textarea>
-  <div>
-    <button type="submit">Save and publish</button>
-    <a class="cta ghost" href="https://${escapeHtml(tenantId)}.${escapeHtml(env.ROOT_DOMAIN)}/${escapeHtml(slug)}/">View site</a>
-    <a class="cta ghost" href="/account">Back</a>
-  </div>
+  <p class="actions">
+    <button type="submit">Publish changes</button>
+    <a class="btn btn-quiet" href="/account">Back to sites</a>
+  </p>
+  <p class="fine">Saving publishes a new version of the whole site.</p>
 </form>`,
   });
 }

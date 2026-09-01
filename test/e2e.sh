@@ -459,7 +459,7 @@ c -T "$WORK/site.tar.gz" "$APEX/_api/sites/notes/tarball" -H "Authorization: Bea
 DASH=$(c "$APEX/account" -H "Cookie: __Host-jmp2_session=$SESS")
 contains "dashboard lists a published site" "octosite.jmp2.io/notes/" "$DASH"
 contains "dashboard shows the live version" "v1" "$DASH"
-contains "dashboard shows the file count" "<td>5</td>" "$DASH"
+contains "dashboard shows the file count" "5 files" "$DASH"
 
 echo "== dashboard token actions =="
 MINTED=$(c -X POST "$APEX/account/tokens" -H "Cookie: __Host-jmp2_session=$SESS" \
@@ -523,25 +523,19 @@ contains "the previous version is still there to roll back to" '"version": 1' \
   "$(c "$APEX/_api/sites/locked" -H "Authorization: Bearer $NEWTOK")"
 
 echo "== article template =="
-# Its own fixture: ten earlier sections mutate $SLUG, and a layout assertion
-# should not depend on which of them ran last.
-TPL="$WORK/tpl"; mkdir -p "$TPL"
-printf '# Front page\n\nintro\n' > "$TPL/index.md"
-printf '# Reference\n\nlead\n\n## Requests\n\na\n\n## Responses\n\nb\n' > "$TPL/ref.md"
-tar czf - -C "$TPL" . | c -T - "$APEX/_api/sites/tpl/tarball" -H "Authorization: Bearer $TOKEN" > /dev/null
-DOC=$(c "$SUB/tpl/")
-contains "the article has a floating rail" 'class="rail"' "$DOC"
-contains "the rail has an up link" '>../<' "$DOC"
-contains "the title is its own block" 'class="doc-title"' "$DOC"
-contains "the meta line links the source" 'class="doc-meta"' "$DOC"
-contains "multi-page sites list their pages" 'Pages' "$DOC"
-absent  "a document without sections gets no outline" 'Contents' "$DOC"
-REF=$(c "$SUB/tpl/ref")
-contains "a document with sections gets an outline" 'Contents' "$REF"
-contains "the outline links each section" 'href="#requests"' "$REF"
-contains "the outline shows section titles" '>Responses<' "$REF"
-contains "the article title is the document, not the site" '>Reference<' "$REF"
-c -X DELETE "$APEX/_api/sites/tpl" -H "Authorization: Bearer $TOKEN" > /dev/null
+DOC=$(c "$SUB/$SLUG/")
+contains "the article keeps its sidebar" 'class="sidebar"' "$DOC"
+contains "the sidebar lists the site's pages" "/$SLUG/guide/" "$DOC"
+contains "the sidebar links back to the site root" "class=\"site\"" "$DOC"
+
+echo "== dashboard markup =="
+DASH2=$(c "$APEX/account" -H "Cookie: __Host-jmp2_session=$SESS")
+contains "sites render as cards" 'class="card"' "$DASH2"
+contains "state reads as a pill" 'class="pill' "$DASH2"
+contains "access controls are disclosed, not always open" 'class="disclose"' "$DASH2"
+contains "tokens render as rows" 'class="rows"' "$DASH2"
+contains "the summary strip is present" 'class="summary"' "$DASH2"
+absent  "no button carries its own left margin" 'style="margin-left' "$DASH2"
 
 echo "== rate limiting =="
 for i in $(seq 1 62); do status "$APEX/_api/admin/tenants" -H "Authorization: Bearer $ADMIN" > /dev/null; done

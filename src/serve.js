@@ -232,20 +232,18 @@ export async function serveTenant(request, env, ctx, tenantId) {
     const source = await obj.text();
     // The mount point for relative links is the document's own directory when
     // it is an index, otherwise the site root prefix its URL sits under.
-    const { html, title, headings } = renderMarkdown(source, siteRoot);
+    const { html, title } = renderMarkdown(source, siteRoot);
     const docDir = found.path.includes('/') ? found.path.slice(0, found.path.lastIndexOf('/') + 1) : '';
     response = new Response(
       docPage({
         title: title ? `${title} · ${slug}` : `${slug} · ${tenantId}`,
         contentHtml: html,
         siteRoot,
-        siteLabel: title || site.title || slug,
+        siteLabel: site.title || slug,
         docPaths: docPaths.filter(isMarkdown).sort(),
         currentPath: found.path,
         rawHref: `${siteRoot}/${found.path}`,
         rootDomain: env.ROOT_DOMAIN,
-        headings,
-        updatedAt: site.updated_at,
         canonical: `${url.origin}${siteRoot}/${docDir}`,
       }),
       {

@@ -92,37 +92,21 @@ a:hover{text-decoration-color:var(--fg)}
   :root:not([data-theme="light"]) .theme-toggle .in-light{display:none}
 }
 
-/* Article layout: one centred column, with a rail of navigation floated into
-   the margin. The rail is decoration on a wide screen and noise on a narrow
-   one, so below 1280px it collapses into a plain block above the article
-   rather than competing with the text. */
-.page{display:flex;justify-content:center;padding:3rem 1.25rem 6rem}
-.col{width:100%;max-width:44rem;min-width:0}
+.wrap{display:grid;grid-template-columns:15rem minmax(0,1fr);min-height:100vh}
+.sidebar{background:var(--surface);border-right:1px solid var(--line);padding:1.5rem 1rem;overflow-y:auto}
+.sidebar .site{font-weight:600;font-size:.95rem;display:block;margin-bottom:1rem;
+  color:var(--fg);word-break:break-word;text-decoration:none}
+.sidebar ul{list-style:none;margin:0;padding:0}
+.sidebar li{margin:.15rem 0}
+.sidebar ul ul{margin-left:.75rem;border-left:1px solid var(--line);padding-left:.6rem}
+.sidebar a{display:block;padding:.2rem .35rem;border-radius:4px;font-size:.9rem;color:var(--muted);
+  text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sidebar a:hover{background:var(--surface-2);color:var(--fg)}
+.sidebar a.current{color:var(--fg);font-weight:600;background:var(--surface-2)}
+.sidebar .dir{font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);
+  margin:.9rem 0 .25rem;font-weight:600}
 
-.rail{position:fixed;transform:translateX(-16rem);width:14rem;
-  max-height:calc(100vh - 8rem);overflow-y:auto;font-size:.85rem}
-.rail .up{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);
-  text-decoration:none;display:inline-block;margin-bottom:1.5rem}
-.rail .up:hover{color:var(--fg)}
-.rail nav{margin-bottom:1.75rem}
-.rail .label{font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;
-  color:var(--faint);margin-bottom:.5rem}
-.rail ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.4rem}
-.rail a{color:var(--muted);text-decoration:none;display:block;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rail a:hover{color:var(--fg)}
-.rail a.current{color:var(--fg)}
-.rail .d2{padding-left:.85rem}
-.rail .d3{padding-left:1.7rem}
-.up-inline{display:none;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
-  color:var(--muted);text-decoration:none}
-
-.doc-title{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
-  font-size:1.6rem;line-height:1.3;font-weight:600;margin:0;letter-spacing:-.01em}
-.doc-meta{color:var(--muted);font-size:.85rem;margin:.5rem 0 2.5rem;
-  display:flex;gap:.75rem;flex-wrap:wrap}
-
-main{min-width:0}
+main{min-width:0;padding:2.5rem 3rem 6rem;max-width:52rem}
 main>*:first-child{margin-top:0}
 h1,h2,h3,h4{line-height:1.3;margin:2.25rem 0 .75rem;font-weight:650;letter-spacing:-.01em}
 h1{font-size:1.9rem;margin-top:0}
@@ -157,28 +141,123 @@ mark{background:var(--surface-2);color:inherit}
 .sub{color:var(--muted);font-size:.85rem}
 .fine{color:var(--faint);font-size:.85rem}
 
-form{margin:1.5rem 0}
-label{display:inline-flex;align-items:center;gap:.25rem;border:1px solid var(--line-strong);
-  border-radius:8px;padding:.15rem .6rem .15rem .15rem;background:var(--bg)}
-label input{border:0;outline:0;background:none;color:var(--fg);font:inherit;
-  padding:.55rem .6rem;min-width:12rem}
-.suffix{color:var(--muted)}
-button,.button,.cta{display:inline-block;padding:.6rem 1.1rem;border:1px solid var(--fg);
-  border-radius:8px;background:var(--accent);color:var(--on-accent);
-  font:inherit;font-weight:600;cursor:pointer;text-decoration:none}
-button{margin-left:.5rem}
-button:hover,.button:hover,.cta:hover{opacity:.85;text-decoration:none}
-.cta.ghost{background:none;color:var(--fg);border-color:var(--line-strong)}
-.inline{display:inline-block;margin:.5rem .5rem .5rem 0}
-.inline button{margin-left:0}
-button.danger{background:none;color:var(--muted);border-color:var(--line);
-  padding:.3rem .7rem;font-size:.85rem;font-weight:500}
-button.danger:hover{color:var(--fg);border-color:var(--fg);opacity:1}
-.error{font-weight:600;border-left:3px solid var(--fg);padding-left:.75rem}
-.meter{height:6px;background:var(--surface-2);border-radius:3px;overflow:hidden;margin:1.5rem 0 .35rem}
+/* ---- controls -------------------------------------------------------------
+   One button system, one height, laid out by flex gap. A global
+   button rule setting margin-left pushed every button half a space to the
+   right wherever it appeared, which is what made the dashboard look
+   misaligned; spacing belongs to the container now. */
+.btn,button,.cta,.button{
+  display:inline-flex;align-items:center;justify-content:center;gap:.4rem;
+  height:2.1rem;padding:0 .85rem;margin:0;
+  border:1px solid var(--fg);border-radius:7px;
+  background:var(--accent);color:var(--on-accent);
+  font:inherit;font-size:.875rem;font-weight:600;line-height:1;
+  white-space:nowrap;cursor:pointer;text-decoration:none}
+.btn:hover,button:hover,.cta:hover,.button:hover{opacity:.85;text-decoration:none}
+.btn-quiet,.cta.ghost,button.danger{
+  background:none;color:var(--fg);border-color:var(--line-strong);font-weight:500}
+.btn-quiet:hover,button.danger:hover{border-color:var(--fg);opacity:1}
+.btn-sm{height:1.85rem;padding:0 .65rem;font-size:.8rem}
+:focus-visible{outline:2px solid var(--fg);outline-offset:2px;border-radius:4px}
+
+.actions{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
+form.inline{display:inline-flex;margin:0}
+
+/* ---- fields --------------------------------------------------------------- */
+.field{display:flex;flex-direction:column;gap:.3rem;min-width:0}
+.field > span{font-size:.75rem;color:var(--muted)}
+input[type=text],input[type=password],input:not([type]){
+  font:inherit;font-size:.875rem;height:2.1rem;padding:0 .6rem;
+  border:1px solid var(--line-strong);border-radius:7px;
+  background:var(--bg);color:var(--fg);min-width:0;width:100%}
+input:focus{outline:2px solid var(--fg);outline-offset:-1px;border-color:var(--fg)}
+label.opt{display:inline-flex;align-items:center;gap:.4rem;
+  font-size:.85rem;color:var(--muted);cursor:pointer}
+label.opt input{width:auto;height:auto}
+
+textarea{width:100%;display:block;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:.875rem;line-height:1.65;padding:1rem;
+  border:1px solid var(--line-strong);border-radius:9px;
+  background:var(--surface);color:var(--fg);resize:vertical;tab-size:2}
+textarea:focus{outline:2px solid var(--fg);outline-offset:-1px}
+
+/* ---- dashboard ------------------------------------------------------------
+   Cards rather than one wide table: each site carries a name, a state, a few
+   numbers and its own controls, and a table row cannot hold controls without
+   the columns fighting each other. */
+.summary{display:flex;flex-wrap:wrap;align-items:baseline;gap:.5rem 1.25rem;
+  padding-bottom:1.25rem;border-bottom:1px solid var(--line);margin-bottom:2rem}
+.summary .host{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:1.05rem;color:var(--fg);text-decoration:none}
+.summary .host:hover{text-decoration:underline}
+.summary .stat{font-size:.85rem;color:var(--muted);font-variant-numeric:tabular-nums}
+
+.meter{height:4px;background:var(--surface-2);border-radius:2px;overflow:hidden;
+  width:100%;max-width:14rem}
 .meter-fill{height:100%;background:var(--fg)}
-.callout{border:1px solid var(--line-strong);border-radius:8px;padding:1rem 1.25rem;margin:1.5rem 0}
+
+.section{margin:2.5rem 0 0}
+.section-head{display:flex;align-items:center;justify-content:space-between;
+  gap:1rem;margin-bottom:.9rem}
+.section-head h2{margin:0;padding:0;border:0;font-size:1.05rem}
+
+.cards{display:flex;flex-direction:column;gap:.6rem}
+.card{border:1px solid var(--line);border-radius:10px;padding:.9rem 1rem;
+  background:var(--bg)}
+.card-top{display:flex;align-items:flex-start;justify-content:space-between;
+  gap:1rem;flex-wrap:wrap}
+.card-id{display:flex;flex-direction:column;gap:.25rem;min-width:0}
+.card-id .name{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:.95rem;font-weight:600;color:var(--fg);text-decoration:none}
+.card-id .name:hover{text-decoration:underline}
+.card-facts{display:flex;gap:.9rem;flex-wrap:wrap;font-size:.8rem;
+  color:var(--muted);font-variant-numeric:tabular-nums}
+
+/* State reads as shape, not hue: the palette is monochrome, so a filled pill
+   means listed, an outline means unlisted, and a dot marks a password. */
+.pill{display:inline-flex;align-items:center;gap:.35rem;
+  padding:.15rem .5rem;border-radius:999px;border:1px solid var(--line-strong);
+  font-size:.72rem;letter-spacing:.03em;text-transform:uppercase;
+  color:var(--muted);white-space:nowrap}
+.pill.listed{background:var(--fg);border-color:var(--fg);color:var(--on-accent)}
+.pill .dot{width:5px;height:5px;border-radius:50%;background:currentColor}
+
+.disclose{margin-top:.85rem;border-top:1px solid var(--line);padding-top:.85rem}
+.disclose[open]{margin-bottom:.15rem}
+.disclose summary{font-size:.82rem;color:var(--muted);cursor:pointer;
+  list-style:none;display:inline-flex;align-items:center;gap:.35rem}
+.disclose summary::-webkit-details-marker{display:none}
+.disclose summary::before{content:"+";font-family:ui-monospace,monospace}
+.disclose[open] summary::before{content:"−"}
+.disclose summary:hover{color:var(--fg)}
+.access{display:grid;grid-template-columns:repeat(auto-fit,minmax(11rem,1fr));
+  gap:.75rem;margin:.9rem 0 0;align-items:end}
+.access .full{grid-column:1/-1;display:flex;gap:.75rem;flex-wrap:wrap;align-items:center}
+.choices{display:flex;gap:1rem;flex-wrap:wrap}
+
+.rows{display:flex;flex-direction:column;gap:0;
+  border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.row{display:flex;align-items:center;justify-content:space-between;gap:1rem;
+  padding:.7rem 1rem;flex-wrap:wrap}
+.row + .row{border-top:1px solid var(--line)}
+.row .id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85rem}
+.row .meta{font-size:.78rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.row.gone .id,.row.gone .meta{color:var(--faint);text-decoration:line-through}
+
+.callout{border:1px solid var(--fg);border-radius:10px;padding:1rem 1.15rem;margin:1.5rem 0}
 .callout pre{margin:.75rem 0 0}
+.empty{border:1px dashed var(--line-strong);border-radius:10px;
+  padding:1.5rem;color:var(--muted);font-size:.9rem}
+.empty pre{margin:.85rem 0 0}
+
+.filetabs{display:flex;gap:.4rem;flex-wrap:wrap;margin:1.25rem 0 .75rem}
+.filetabs a{font-size:.8rem;font-family:ui-monospace,Menlo,monospace;
+  padding:.3rem .6rem;border:1px solid var(--line);border-radius:6px;
+  color:var(--muted);text-decoration:none}
+.filetabs a:hover{color:var(--fg);border-color:var(--line-strong)}
+.filetabs a.current{color:var(--fg);border-color:var(--fg)}
+
 .hero{display:flex;gap:.75rem;flex-wrap:wrap;align-items:center;margin:2.5rem 0}
 .hero.top{margin:1.25rem 0 2.5rem}
 textarea{width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
@@ -203,23 +282,14 @@ form.access input[type=text],form.access input[name=auth_user],form.access input
 label.radio{display:inline-flex;align-items:center;gap:.35rem;border:0;padding:0;
   font-size:.85rem;color:var(--muted)}
 form.access button{margin-left:0;padding:.35rem .8rem;font-size:.85rem}
-.tag{display:inline-block;padding:.1rem .45rem;border:1px solid var(--line-strong);
-  border-radius:4px;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;
-  color:var(--muted);white-space:nowrap}
-.tag.on{border-color:var(--fg);color:var(--fg)}
 ul.sites{list-style:none;padding:0;margin:2rem 0}
 ul.sites li{margin:.6rem 0}
 
-@media (max-width:1279px){
-  .rail{position:static;transform:none;width:auto;max-height:none;
-    margin:0 0 2.5rem;padding-bottom:1.5rem;border-bottom:1px solid var(--line)}
-  .rail .up{display:none}
-  .up-inline{display:inline-block;margin-bottom:1.5rem}
-}
 @media (max-width:820px){
-  .page{padding:2rem 1.1rem 4rem}
+  .wrap{grid-template-columns:1fr}
+  .sidebar{border-right:0;border-bottom:1px solid var(--line);max-height:14rem;padding:1rem}
+  main{padding:1.5rem 1.25rem 4rem}
   .center{padding:3rem 1.25rem}
-  .doc-title{font-size:1.35rem}
 }
 `;
 
@@ -263,30 +333,35 @@ ${bodyHtml}
 }
 
 /**
- * The other documents in this site, for the rail. Omitted for a one-page site,
- * where a list of one link is only clutter.
+ * Render the sidebar from the site's markdown files, grouped by directory.
+ * @param {string[]} paths   markdown paths relative to the site root
+ * @param {string} siteRoot  e.g. "/handbook"
+ * @param {string} current   the path currently being viewed
  */
-function pagesNav(paths, siteRoot, current) {
+function navHtml(paths, siteRoot, current) {
   if (paths.length <= 1) return '';
-  const items = paths.sort(byIndexFirst).map((p) => {
-    const href = `${siteRoot}/${p.replace(/\.(md|markdown)$/i, '')}`
-      .replace(/\/(index|readme)$/i, '/');
-    const label = p.replace(/\.(md|markdown)$/i, '');
-    return `<li><a href="${escapeHtml(href)}"${p === current ? ' class="current"' : ''}>${escapeHtml(label)}</a></li>`;
-  }).join('');
-  return `<nav><div class="label">Pages</div><ul>${items}</ul></nav>`;
-}
+  const groups = new Map();
+  for (const p of paths) {
+    const slash = p.lastIndexOf('/');
+    const dir = slash === -1 ? '' : p.slice(0, slash);
+    if (!groups.has(dir)) groups.set(dir, []);
+    groups.get(dir).push(p);
+  }
+  const dirs = [...groups.keys()].sort((a, b) => (a === '' ? -1 : b === '' ? 1 : a.localeCompare(b)));
 
-/**
- * This document's own outline. h1 is the title, already shown above the article,
- * and anything past h3 is too fine-grained to help navigate.
- */
-function outlineNav(headings) {
-  const shown = headings.filter((h) => h.depth >= 2 && h.depth <= 3);
-  if (shown.length < 2) return '';
-  const items = shown.map((h) =>
-    `<li class="d${h.depth}"><a href="#${escapeHtml(h.id)}">${escapeHtml(h.text)}</a></li>`).join('');
-  return `<nav><div class="label">Contents</div><ul>${items}</ul></nav>`;
+  let out = '';
+  for (const dir of dirs) {
+    if (dir !== '') out += `<div class="dir">${escapeHtml(dir)}</div>`;
+    out += '<ul>';
+    for (const p of groups.get(dir).sort(byIndexFirst)) {
+      const href = `${siteRoot}/${p.replace(/\.(md|markdown)$/i, '')}`.replace(/\/(index|readme)$/i, '/');
+      const label = p.slice(dir === '' ? 0 : dir.length + 1).replace(/\.(md|markdown)$/i, '');
+      const cls = p === current ? ' class="current"' : '';
+      out += `<li><a href="${escapeHtml(href)}"${cls}>${escapeHtml(label)}</a></li>`;
+    }
+    out += '</ul>';
+  }
+  return out;
 }
 
 const byIndexFirst = (a, b) => {
@@ -294,33 +369,20 @@ const byIndexFirst = (a, b) => {
   return rank(a) - rank(b) || a.localeCompare(b);
 };
 
-const isoDate = (seconds) =>
-  seconds ? new Date(seconds * 1000).toISOString().slice(0, 10) : '';
-
-export function docPage({
-  title, contentHtml, siteRoot, siteLabel, docPaths, currentPath, rawHref,
-  canonical, rootDomain, headings = [], updatedAt,
-}) {
-  const rail = `${pagesNav(docPaths, siteRoot, currentPath)}${outlineNav(headings)}`;
-  const updated = isoDate(updatedAt);
-
-  const body = `<div class="page">
-<div class="col">
-<aside class="rail">
-  <a class="up" href="${escapeHtml(siteRoot)}/">../</a>
-  ${rail}
+export function docPage({ title, contentHtml, siteRoot, siteLabel, docPaths, currentPath, rawHref, canonical, rootDomain }) {
+  const nav = navHtml(docPaths, siteRoot, currentPath);
+  const body = `<div class="wrap">
+<aside class="sidebar">
+  <a class="site" href="${escapeHtml(siteRoot)}/">${escapeHtml(siteLabel)}</a>
+  ${nav}
 </aside>
-<a class="up-inline" href="${escapeHtml(siteRoot)}/">../</a>
 <main>
-<div class="doc-title">${escapeHtml(siteLabel)}</div>
-<div class="doc-meta">
-  ${updated ? `<time datetime="${escapeHtml(updated)}">${escapeHtml(updated)}</time>` : ''}
-  <a href="${escapeHtml(rawHref)}">source</a>
-  <span>on <a href="https://${escapeHtml(rootDomain)}/">${escapeHtml(rootDomain)}</a></span>
-</div>
 ${contentHtml}
-</main>
+<div class="footer">
+  <a href="${escapeHtml(rawHref)}">view source</a>
+  <span>served by <a href="https://${escapeHtml(rootDomain)}/">${escapeHtml(rootDomain)}</a></span>
 </div>
+</main>
 </div>`;
   return shell({ title, bodyHtml: body, canonical });
 }
