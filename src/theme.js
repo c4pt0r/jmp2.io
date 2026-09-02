@@ -1,18 +1,22 @@
 import { escapeHtml } from './util.js';
 
 /**
- * The only script on any page: it applies the reader's saved preferences —
- * theme, and whether the sidebar is collapsed — before first paint, and handles
- * both toggles. It is pinned by hash in the CSP, so this exact source is the
+ * The only script on any page. It applies the reader's saved preferences —
+ * theme, and whether the sidebar is collapsed — before first paint, handles
+ * both toggles, and enhances the upload control: a dropped *folder* never
+ * lands in `input.files`, so it is walked into real Files whose names carry
+ * the relative path. Without the script the control still works, because a
+ * file input is already a drop target; what is lost is folder drops and the
+ * drag highlight. It is pinned by hash in the CSP, so this exact source is the
  * only script that can ever execute: an injected `<script>` has a different
  * hash and is still blocked, which keeps almost all of the value of
  * `script-src 'none'` while allowing real controls.
  *
  * THEME_SCRIPT_SHA256 must match this string; a unit test enforces that.
  */
-export const THEME_SCRIPT = `(function(){var R=document.documentElement;function load(k,a){try{var v=localStorage.getItem(k);if(v)R.setAttribute(a,v)}catch(e){}}load('jmp2-theme','data-theme');load('jmp2-sidebar','data-sidebar');document.addEventListener('click',function(e){var t=e.target;if(!t||!t.closest)return;if(t.closest('[data-theme-toggle]')){var n=R.getAttribute('data-theme')==='light'?'dark':'light';R.setAttribute('data-theme',n);try{localStorage.setItem('jmp2-theme',n)}catch(e){}}else if(t.closest('[data-sidebar-toggle]')){var s=R.getAttribute('data-sidebar')==='off'?'on':'off';R.setAttribute('data-sidebar',s);try{localStorage.setItem('jmp2-sidebar',s)}catch(e){}}})})();`;
+export const THEME_SCRIPT = `(function(){var R=document.documentElement;function load(k,a){try{var v=localStorage.getItem(k);if(v)R.setAttribute(a,v)}catch(e){}}load('jmp2-theme','data-theme');load('jmp2-sidebar','data-sidebar');function zone(e){var t=e.target;return t&&t.closest?t.closest('[data-drop]'):null}function show(z,files){var l=z.querySelector('[data-drop-label]');if(!l)return;l.textContent=files.length?files.length+' file'+(files.length>1?'s':'')+' ready':l.getAttribute('data-idle')}function put(z,files){try{var d=new DataTransfer();for(var i=0;i<files.length;i++)d.items.add(files[i]);z.querySelector('input[type=file]').files=d.files;show(z,files)}catch(e){}}function walk(entry,prefix,out){return new Promise(function(done){if(entry.isFile){entry.file(function(f){out.push(new File([f],prefix+f.name,{type:f.type}));done()},done)}else if(entry.isDirectory){var r=entry.createReader(),seen=[];(function read(){r.readEntries(function(es){if(!es.length){Promise.all(seen.map(function(c){return walk(c,prefix+entry.name+'/',out)})).then(done)}else{seen=seen.concat(es);read()}},done)})()}else{done()}})}document.addEventListener('dragover',function(e){var z=zone(e);if(z){e.preventDefault();z.setAttribute('data-over','')}});document.addEventListener('dragleave',function(e){var z=zone(e);if(z&&!z.contains(e.relatedTarget))z.removeAttribute('data-over')});document.addEventListener('drop',function(e){var z=zone(e);if(!z)return;e.preventDefault();z.removeAttribute('data-over');var dt=e.dataTransfer;var items=dt.items,entries=[];if(items&&items.length&&items[0].webkitGetAsEntry){for(var i=0;i<items.length;i++){var en=items[i].webkitGetAsEntry();if(en)entries.push(en)}}if(!entries.length){put(z,dt.files);return}var out=[];Promise.all(entries.map(function(en){return walk(en,'',out)})).then(function(){put(z,out)})});document.addEventListener('change',function(e){var z=zone(e);if(z&&e.target.files)show(z,e.target.files)});document.addEventListener('click',function(e){var t=e.target;if(!t||!t.closest)return;if(t.closest('[data-theme-toggle]')){var n=R.getAttribute('data-theme')==='light'?'dark':'light';R.setAttribute('data-theme',n);try{localStorage.setItem('jmp2-theme',n)}catch(e){}}else if(t.closest('[data-sidebar-toggle]')){var s=R.getAttribute('data-sidebar')==='off'?'on':'off';R.setAttribute('data-sidebar',s);try{localStorage.setItem('jmp2-sidebar',s)}catch(e){}}})})();`;
 
-export const THEME_SCRIPT_SHA256 = 'sha256-NiQVOoWn7DJci1DffcH4Ycc0zUjTrEwThpwswOz+DvM=';
+export const THEME_SCRIPT_SHA256 = 'sha256-HQ554CLkQd1DmLvXpThmSX2i+FWZX1oR3THgpDJhMds=';
 
 /**
  * No external anything. Scripts are limited to the one hash above, so a page of
@@ -265,6 +269,23 @@ textarea:focus{outline:2px solid var(--fg);outline-offset:-1px}
 
 .callout{border:1px solid var(--fg);border-radius:10px;padding:1rem 1.15rem;margin:1.5rem 0}
 .callout pre{margin:.75rem 0 0}
+/* ---- dropzone ---- */
+form.drop{display:flex;flex-direction:column;gap:.75rem;margin:0 0 1.25rem}
+.dropzone{display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:.35rem;padding:2rem 1rem;text-align:center;cursor:pointer;
+  border:1px dashed var(--line-strong);border-radius:10px;background:var(--surface);
+  color:var(--muted);font-size:.9rem;transition:border-color .12s,color .12s}
+.dropzone:hover{border-color:var(--fg);color:var(--fg)}
+.dropzone[data-over]{border-color:var(--fg);border-style:solid;color:var(--fg);
+  background:var(--surface-2)}
+.dropzone input[type=file]{position:absolute;width:1px;height:1px;opacity:0;
+  overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.dropzone:focus-within{outline:2px solid var(--fg);outline-offset:2px}
+.dropzone .hint{font-size:.78rem;color:var(--faint)}
+.drop-go{display:flex;gap:.75rem;align-items:end;flex-wrap:wrap}
+.drop-go .field{max-width:16rem;flex:1 1 12rem}
+@media (prefers-reduced-motion:reduce){.dropzone{transition:none}}
+
 .empty{border:1px dashed var(--line-strong);border-radius:10px;
   padding:1.5rem;color:var(--muted);font-size:.9rem}
 .empty pre{margin:.85rem 0 0}

@@ -519,6 +519,62 @@ c -X POST "$APEX$ACC" -H "Cookie: __Host-jmp2_session=$SESS" -H 'origin: https:/
   -d 'visibility=secret&auth_user=alice&password=&clear_password=1' > /dev/null
 check "removing the password is explicit and works" 200 "$(status "$OSUB/locked/")"
 
+echo "== dashboard: drop to publish =="
+DZ=$(c "$APEX/account" -H "Cookie: __Host-jmp2_session=$SESS")
+contains "the dashboard offers a dropzone" 'data-drop' "$DZ"
+contains "with a real file input under it" 'type="file" name="files"' "$DZ"
+contains "and a site name field" 'name="slug"' "$DZ"
+
+up() { c -X POST "$APEX/account/upload" -H "Cookie: __Host-jmp2_session=$SESS" -H 'origin: https://jmp2.io' "$@"; }
+uph() { hdrs -X POST "$APEX/account/upload" -H "Cookie: __Host-jmp2_session=$SESS" -H 'origin: https://jmp2.io' "$@"; }
+OSUB4="http://octosite.jmp2.io:$PORT"
+
+# A lone markdown file becomes the site's front page, so the name alone is the URL.
+printf '# Dropped\n\nstraight from the desktop\n' > "$WORK/note.md"
+contains "one markdown file publishes" "uploaded=dropped" "$(uph -F 'slug=dropped' -F "files=@$WORK/note.md")"
+check "and the site name alone is the url" 200 "$(status "$OSUB4/dropped/")"
+contains "the document is the front page" "straight from the desktop" "$(c "$OSUB4/dropped/")"
+
+# A zip is expanded rather than stored: nobody wants to publish a .zip.
+ZD="$WORK/zsite"; mkdir -p "$ZD/site/img"
+printf '# Zipped\n\n![pic](./img/p.png)\n' > "$ZD/site/index.md"
+printf '# Second\n' > "$ZD/site/second.md"
+printf '\x89PNG\r\n\x1a\nX' > "$ZD/site/img/p.png"
+(cd "$ZD" && zip -qr site.zip site)
+contains "a zip publishes" "uploaded=zipped" "$(uph -F 'slug=zipped' -F "files=@$ZD/site.zip")"
+check "its index is live" 200 "$(status "$OSUB4/zipped/")"
+check "its second page is live" 200 "$(status "$OSUB4/zipped/second")"
+check "its asset is live" 200 "$(status "$OSUB4/zipped/img/p.png")"
+absent "the zip itself was not published" "site.zip" "$(c "$OSUB4/zipped/")"
+
+# A tar.gz goes the same way.
+tar czf "$WORK/site2.tgz" -C "$ZD" site
+contains "a tar.gz publishes" "uploaded=tarred" "$(uph -F 'slug=tarred' -F "files=@$WORK/site2.tgz")"
+check "the tar.gz index is live" 200 "$(status "$OSUB4/tarred/")"
+
+# Dropping onto an existing site adds to it rather than replacing it.
+printf '# Added\n' > "$WORK/extra.md"
+up -F 'slug=zipped' -F "files=@$WORK/extra.md" > /dev/null
+check "an added file is live" 200 "$(status "$OSUB4/zipped/extra")"
+check "and the original survives" 200 "$(status "$OSUB4/zipped/second")"
+
+echo "== drop validation =="
+contains "an unnamed site is refused" "err=slug" "$(uph -F 'slug=' -F "files=@$WORK/note.md")"
+contains "an invalid name is refused" "err=slug" "$(uph -F 'slug=Not Valid' -F "files=@$WORK/note.md")"
+contains "dropping nothing is refused" "err=empty" "$(uph -F 'slug=nothing')"
+printf 'not an archive' > "$WORK/broken.zip"
+contains "a broken archive is refused" "err=archive" "$(uph -F 'slug=broken' -F "files=@$WORK/broken.zip")"
+check "the broken upload created nothing" 404 "$(status "$OSUB4/broken/")"
+check "a cross-site upload is rejected" 403 \
+  "$(status -X POST "$APEX/account/upload" -H "Cookie: __Host-jmp2_session=$SESS" \
+     -H 'origin: https://evil.example' -F 'slug=x' -F "files=@$WORK/note.md")"
+check "a signed-out upload redirects" 302 \
+  "$(status -X POST "$APEX/account/upload" -F 'slug=x' -F "files=@$WORK/note.md")"
+
+for s in dropped zipped tarred; do
+  c -X DELETE "$APEX/_api/sites/$s" -H "Authorization: Bearer $NEWTOK" > /dev/null
+done
+
 echo "== dashboard: markdown editor =="
 ED=$(c "$APEX/account/sites/locked/edit" -H "Cookie: __Host-jmp2_session=$SESS")
 contains "the editor loads the document source" "# CLI site" "$ED"

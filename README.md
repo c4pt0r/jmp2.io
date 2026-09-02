@@ -103,6 +103,18 @@ confirm dialog to lean on. The confirmation page states what disappears and
 asks the owner to type the slug — a misclick cannot get past that, and it needs
 nothing the browser has to run.
 
+Publishing by drag and drop takes a markdown file, a folder, or a `.zip` /
+`.tar.gz`: name the site and it is live. Archives are expanded rather than
+stored, and a lone markdown file becomes `index.md` so the name alone is the
+URL — but only for a new site, since dropping one document onto an existing one
+means adding a page, not replacing its front page. Dropping always merges.
+
+The control is a styled `<label>` over a real `<input type="file">`, which is
+already a drop target, so it works with script blocked. What the hash-pinned
+script adds is the drag highlight and folder drops: a dropped *directory* never
+lands in `input.files`, so it is walked through `webkitGetAsEntry` into real
+Files whose names carry the relative path.
+
 The editor is a `<textarea>` and a form post, with one sticky strip of chrome
 and the viewport given to the text. New pages are added from the same row as
 the file tabs; a name without an extension gets `.md`, and the page goes live
@@ -327,6 +339,7 @@ src/api.js        write API, staging, publish, versions, admin
 src/serve.js      read path, URL resolution, caching
 src/render.js     markdown -> HTML, link rewriting
 src/tar.js        tar/gzip reader
+src/zip.js        zip reader (central directory, stored and deflate)
 src/theme.js      page shell, CSS, CSP, theme toggle
 src/skill.js      the one document behind /, /skill.md, /llms.txt, /openapi.json
 src/oauth.js      signup flow, provider-agnostic

@@ -152,9 +152,10 @@ the shared edge cache, so a cached copy can never be handed to someone who did
 not authenticate. Clearing a password is explicit (\`"password": null\`) so a
 routine publish cannot unlock a site by accident.
 
-You can also set visibility, the username and the password from
-[your dashboard](https://${d}/account), which additionally has a plain editor for
-adding and changing documents in the browser. Saving there publishes a new version, so the
+You can also do all of this from [your dashboard](https://${d}/account): set
+visibility, the username and the password; add and edit documents in a plain
+editor; and publish by dropping a markdown file, a folder, or a .zip / .tar.gz
+onto the page and giving it a name. Saving there publishes a new version, so the
 previous one stays available for rollback.
 
 ## Versions and rollback

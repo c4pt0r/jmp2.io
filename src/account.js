@@ -2,9 +2,11 @@ import { clearCookie, readSession } from './auth.js';
 import { mintToken } from './tokens.js';
 import { hashPassword } from './password.js';
 import { LIMITS as RATE, hit } from './ratelimit.js';
-import { ctypeFor, escapeHtml, isMarkdown, normalizePath, now } from './util.js';
+import { ctypeFor, escapeHtml, isMarkdown, isValidSlug, normalizePath, now } from './util.js';
 import { objectKey } from './serve.js';
-import { deleteSite } from './api.js';
+import { LIMITS, deleteSite } from './api.js';
+import { maybeGunzip, parseTar, stripCommonPrefix } from './tar.js';
+import { looksLikeZip, parseZip } from './zip.js';
 import { sessionIdentity } from './oauth.js';
 import { authPage } from './theme.js';
 
@@ -149,7 +151,30 @@ function tokensSection(tokens) {
   return `<div class="rows">${rows}</div>`;
 }
 
-function dashboardHtml({ tenant, rootDomain, sites, tokens, usedBytes, freshToken }) {
+/**
+ * Publish by dropping. The file input underneath is what actually carries the
+ * files, and a file input is already a drop target — so this works with the
+ * script blocked, minus folder drops and the highlight.
+ */
+function dropzone(notice) {
+  const idle = 'Drop a markdown file, a folder, or a .zip / .tar.gz';
+  return `${notice}
+<form class="drop" method="post" action="/account/upload" enctype="multipart/form-data">
+  <label class="dropzone" data-drop>
+    <input type="file" name="files" multiple>
+    <span data-drop-label data-idle="${escapeHtml(idle)}">${escapeHtml(idle)}</span>
+    <span class="hint">A single markdown file becomes the site's front page.</span>
+  </label>
+  <div class="drop-go">
+    <label class="field"><span>Site name</span>
+      <input name="slug" placeholder="handbook" pattern="[a-z0-9][a-z0-9-]*"
+        autocomplete="off" autocapitalize="off" spellcheck="false" required></label>
+    <button type="submit">Publish</button>
+  </div>
+</form>`;
+}
+
+function dashboardHtml({ tenant, rootDomain, sites, tokens, usedBytes, freshToken, notice = '' }) {
   const pct = Math.min(100, Math.round((usedBytes / tenant.quota_bytes) * 100));
   const home = `https://${tenant.id}.${rootDomain}/`;
   const listed = sites.filter((s) => s.visibility === 'public' && s.current_version != null).length;
@@ -178,6 +203,7 @@ function dashboardHtml({ tenant, rootDomain, sites, tokens, usedBytes, freshToke
 
 <div class="section">
   <div class="section-head"><h2>Sites</h2></div>
+  ${dropzone(notice)}
   ${sitesSection(sites, tenant.id, rootDomain)}
 </div>
 
@@ -209,13 +235,38 @@ async function dashboard(request, env, freshToken = null) {
   const current = await currentTenant(request, env);
   if (!current) return redirect('/signup');
   const data = await loadDashboard(env, current.tenant.id);
+  const url = new URL(request.url);
+
+  // Fixed messages keyed by code: nothing the caller sends is echoed back.
+  const problems = {
+    slug: 'Give the site a name: lowercase letters, digits and hyphens.',
+    empty: 'Nothing was dropped.',
+    count: 'That is more files than a single upload takes.',
+    size: 'One of those files is larger than the per-file limit.',
+    name: 'One of those files has a name that cannot be used as a path.',
+    quota: 'That would put you over your quota.',
+    archive: 'That archive could not be read. Zip and tar.gz are supported.',
+    upload: 'The upload could not be read.',
+  };
+  const err = problems[url.searchParams.get('err')];
+  const uploaded = url.searchParams.get('uploaded');
+  const count = Number(url.searchParams.get('n')) || 0;
+
+  let notice = '';
+  if (err) {
+    notice = `<div class="callout"><strong>${escapeHtml(err)}</strong></div>`;
+  } else if (uploaded && isValidSlug(uploaded)) {
+    const live = `https://${current.tenant.id}.${env.ROOT_DOMAIN}/${uploaded}/`;
+    notice = `<div class="callout"><strong>Published ${count} file${count === 1 ? '' : 's'}.</strong>
+      <a href="${escapeHtml(live)}">${escapeHtml(uploaded)}</a> is live.</div>`;
+  }
   return authPage({
     rootDomain: env.ROOT_DOMAIN,
     title: `${current.tenant.id}.${env.ROOT_DOMAIN}`,
     heading: current.tenant.id,
     wide: true,
     bodyHtml: dashboardHtml({
-      tenant: current.tenant, rootDomain: env.ROOT_DOMAIN, ...data, freshToken,
+      tenant: current.tenant, rootDomain: env.ROOT_DOMAIN, ...data, freshToken, notice,
     }),
   });
 }
@@ -385,6 +436,152 @@ ${problem ? `<div class="callout"><strong>${escapeHtml(problem)}</strong></div>`
   </div>
 </form>`,
   });
+}
+
+const ARCHIVE = /\.(zip|tar|tar\.gz|tgz)$/i;
+
+// A plain dropped file has a bare name; a directory pick or a folder drop
+// carries its relative path. Both are kept as-is: normalizePath is the boundary
+// that rejects traversal, and flattening here would destroy the structure of a
+// folder somebody deliberately dropped.
+const droppedName = (file) => String(file.name || '');
+
+/**
+ * Turn what was dropped into a flat list of files.
+ *
+ * An archive is expanded rather than stored, since nobody wants to publish a
+ * .zip. A lone markdown file becomes `index.md` so the site name alone is the
+ * URL — the same rule the CLI applies to `push <slug> <file>.md` — but only
+ * when the site is new. Dropping one document onto a site that already exists
+ * means adding a page, and renaming it to index.md there would silently
+ * replace the front page instead.
+ */
+async function expand(dropped, { isNewSite }) {
+  if (dropped.length === 1) {
+    const only = dropped[0];
+    const bytes = new Uint8Array(await only.arrayBuffer());
+
+    if (ARCHIVE.test(only.name) || looksLikeZip(bytes)) {
+      const files = looksLikeZip(bytes)
+        ? await parseZip(bytes)
+        : parseTar(await maybeGunzip(bytes));
+      // Named like an archive but yielding nothing means it could not be read,
+      // which is a different problem from dropping nothing at all.
+      if (!files.length) throw new Error('archive contained no files');
+      return stripCommonPrefix(files);
+    }
+    if (isNewSite && isMarkdown(only.name)) return [{ name: 'index.md', data: bytes }];
+    return [{ name: droppedName(only), data: bytes }];
+  }
+
+  const out = [];
+  for (const file of dropped) {
+    out.push({ name: droppedName(file), data: new Uint8Array(await file.arrayBuffer()) });
+  }
+  return stripCommonPrefix(out);
+}
+
+/**
+ * POST /account/upload — drop files into a site.
+ *
+ * Cookie-authenticated rather than bearer, because the browser session has no
+ * token and should not be handed one just to make this work. Files are merged
+ * into the live version rather than replacing it: dropping an image onto a site
+ * should add an image, not delete everything else.
+ */
+async function upload(request, env) {
+  if (badOrigin(request, env)) return new Response('cross-site post rejected', { status: 403 });
+  const current = await currentTenant(request, env);
+  if (!current) return redirect('/signup');
+  if (current.tenant.disabled_at) return redirect('/account');
+  const tenantId = current.tenant.id;
+
+  const back = (q) => redirect(`/account${q}`);
+  const form = await request.formData().catch(() => null);
+  if (!form) return back('?err=upload');
+
+  const slug = String(form.get('slug') || '').trim().toLowerCase();
+  if (!isValidSlug(slug)) return back('?err=slug');
+
+  const dropped = form.getAll('files').filter((f) => f && typeof f === 'object' && 'arrayBuffer' in f && f.size > 0);
+  if (!dropped.length) return back('?err=empty');
+
+  const site = await env.DB.prepare(
+    'SELECT current_version FROM sites WHERE tenant_id = ?1 AND slug = ?2',
+  ).bind(tenantId, slug).first();
+
+  let entries;
+  try {
+    entries = await expand(dropped, { isNewSite: site?.current_version == null });
+  } catch (e) {
+    console.error('upload expand', e?.message);
+    return back('?err=archive');
+  }
+  if (!entries.length) return back('?err=empty');
+  if (entries.length > LIMITS.fileCount) return back('?err=count');
+
+  const staged = [];
+  let incoming = 0;
+  for (const entry of entries) {
+    const path = normalizePath(entry.name);
+    if (!path) return back('?err=name');
+    if (entry.data.byteLength > LIMITS.fileBytes) return back('?err=size');
+    incoming += entry.data.byteLength;
+    staged.push({ path, bytes: entry.data });
+  }
+
+  const used = await env.DB.prepare(
+    `SELECT COALESCE(SUM(bytes), 0) AS b FROM (
+       SELECT DISTINCT slug, src_version, path, bytes FROM files WHERE tenant_id = ?1)`,
+  ).bind(tenantId).first();
+  if ((used?.b ?? 0) + incoming > current.tenant.quota_bytes) return back('?err=quota');
+
+  const ts = now();
+  if (!site) {
+    await env.DB.prepare(
+      'INSERT INTO sites (tenant_id, slug, created_at, updated_at) VALUES (?1, ?2, ?3, ?3)',
+    ).bind(tenantId, slug, ts).run();
+  }
+
+  const max = await env.DB.prepare(
+    'SELECT COALESCE(MAX(version), 0) AS v FROM versions WHERE tenant_id = ?1 AND slug = ?2',
+  ).bind(tenantId, slug).first();
+  const version = (max?.v ?? 0) + 1;
+
+  await env.DB.prepare(
+    `INSERT INTO versions (tenant_id, slug, version, state, created_at)
+     VALUES (?1, ?2, ?3, 'live', ?4)`,
+  ).bind(tenantId, slug, version, ts).run();
+
+  if (site?.current_version != null) {
+    await env.DB.prepare(
+      `INSERT INTO files (tenant_id, slug, version, path, bytes, ctype, src_version)
+       SELECT tenant_id, slug, ?4, path, bytes, ctype, src_version
+       FROM files WHERE tenant_id = ?1 AND slug = ?2 AND version = ?3`,
+    ).bind(tenantId, slug, site.current_version, version).run();
+  }
+
+  const stmt = env.DB.prepare(
+    `INSERT INTO files (tenant_id, slug, version, path, bytes, ctype, src_version)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?3)
+     ON CONFLICT(tenant_id, slug, version, path)
+     DO UPDATE SET bytes = excluded.bytes, ctype = excluded.ctype, src_version = excluded.src_version`,
+  );
+  for (const f of staged) {
+    await env.SITES.put(objectKey(tenantId, slug, version, f.path), f.bytes, {
+      httpMetadata: { contentType: ctypeFor(f.path).ctype },
+    });
+    await stmt.bind(tenantId, slug, version, f.path, f.bytes.byteLength, ctypeFor(f.path).ctype).run();
+  }
+
+  await env.DB.batch([
+    env.DB.prepare(`UPDATE versions SET state = 'retired' WHERE tenant_id = ?1 AND slug = ?2 AND version != ?3 AND state = 'live'`)
+      .bind(tenantId, slug, version),
+    env.DB.prepare('UPDATE sites SET current_version = ?3, updated_at = ?4 WHERE tenant_id = ?1 AND slug = ?2')
+      .bind(tenantId, slug, version, ts),
+  ]);
+
+  return back(`?uploaded=${encodeURIComponent(slug)}&n=${staged.length}`);
 }
 
 /**
@@ -562,6 +759,7 @@ async function saveEdit(request, env, slug) {
 export async function handleAccount(request, env, pathname) {
   if (pathname === '/account' && request.method === 'GET') return dashboard(request, env);
   if (pathname === '/account/tokens' && request.method === 'POST') return createToken(request, env);
+  if (pathname === '/account/upload' && request.method === 'POST') return upload(request, env);
   const revoke = /^\/account\/tokens\/([A-Za-z0-9]{1,32})\/revoke$/.exec(pathname);
   if (revoke && request.method === 'POST') return revokeToken(request, env, revoke[1]);
   const vis = /^\/account\/sites\/([a-z0-9-]{1,63})\/visibility$/.exec(pathname);
