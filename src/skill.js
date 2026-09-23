@@ -182,6 +182,8 @@ endpoint. All responses are JSON.
 | \`GET\` | \`/sites\` | list your sites |
 | \`GET\` | \`/sites/:slug\` | one site with its version history |
 | \`PUT\` | \`/sites/:slug/tarball\` | stage a tar.gz — \`?merge=1\`, \`?publish=0\`, \`?strip=0\`, \`?visibility=\` |
+| \`GET\` | \`/sites/:slug/files\` | list the live version's files — \`?version=N\` or \`?version=staged\` |
+| \`GET\` | \`/sites/:slug/files/*path\` | read one file's bytes — same \`?version=\`; ignores any site password |
 | \`PUT\` | \`/sites/:slug/files/*path\` | stage one file (body is the bytes) |
 | \`DELETE\` | \`/sites/:slug/files/*path\` | drop one file from the staged version |
 | \`POST\` | \`/sites/:slug/publish\` | make the staged version live |
@@ -241,6 +243,8 @@ ${cli} push handbook ./docs     # publish a folder
 ${cli} push notes ./notes.md    # publish one file as its own site
 ${cli} ls                       # list sites
 ${cli} info handbook            # versions
+${cli} files handbook           # list the live version's files
+${cli} cat handbook docs/api.md # print one file (works behind a site password)
 ${cli} push handbook ./docs --secret          # unlisted
 ${cli} push handbook ./docs --password hunter2  # and password protected
 ${cli} secret handbook hunter2  # change an existing site
@@ -331,7 +335,29 @@ export function openApi(rootDomain) {
           responses: { 201: jsonOk('published'), 400: jsonOk('bad archive'), 413: jsonOk('too large or over quota') },
         },
       },
+      '/sites/{slug}/files': {
+        get: {
+          summary: "List a version's files",
+          parameters: [
+            slug,
+            { name: 'version', in: 'query', schema: { type: 'string' }, description: "a version number or 'staged'; defaults to live" },
+          ],
+          responses: { 200: jsonOk('ok'), 404: jsonOk('no such site or version') },
+        },
+      },
       '/sites/{slug}/files/{path}': {
+        get: {
+          summary: "Read one file's bytes (owner read; ignores any site password)",
+          parameters: [
+            slug,
+            { name: 'path', in: 'path', required: true, schema: { type: 'string' } },
+            { name: 'version', in: 'query', schema: { type: 'string' }, description: "a version number or 'staged'; defaults to live" },
+          ],
+          responses: {
+            200: { description: 'the stored bytes', content: { '*/*': { schema: { type: 'string', format: 'binary' } } } },
+            404: jsonOk('no such site, version, or file'),
+          },
+        },
         put: {
           summary: 'Stage one file',
           parameters: [slug, { name: 'path', in: 'path', required: true, schema: { type: 'string' } }],

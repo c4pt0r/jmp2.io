@@ -513,6 +513,64 @@ export async function handleApi(request, env, ctx, pathname) {
     return json({ deleted: slug });
   }
 
+  // Owner reads. The public serve path is the only other way to read content,
+  // and it honours the site password — which the owner may not have kept. The
+  // token already proves ownership of every byte here, so it reads staged and
+  // password-protected content alike. No path lists the version's manifest.
+  if (action === 'files' && request.method === 'GET') {
+    const url = new URL(request.url);
+    const rawPath = parts.slice(3).join('/');
+    const path = rawPath ? normalizePath(rawPath) : '';
+    if (path === null) return err(400, 'invalid file path');
+
+    const site = await env.DB.prepare(
+      'SELECT current_version FROM sites WHERE tenant_id = ?1 AND slug = ?2',
+    ).bind(tenantId, slug).first();
+    if (!site) return err(404, 'no such site');
+
+    let version;
+    const wanted = url.searchParams.get('version');
+    if (wanted === 'staged') {
+      const staging = await findStaging(env, tenantId, slug);
+      if (!staging) return err(404, 'nothing staged for this site');
+      version = staging.version;
+    } else if (wanted !== null) {
+      version = Number(wanted);
+      if (!Number.isInteger(version)) return err(400, "version must be an integer or 'staged'");
+      const row = await env.DB.prepare(
+        'SELECT version FROM versions WHERE tenant_id = ?1 AND slug = ?2 AND version = ?3',
+      ).bind(tenantId, slug, version).first();
+      if (!row) return err(404, 'no such version');
+    } else {
+      if (site.current_version == null) return err(404, 'site has no published version');
+      version = site.current_version;
+    }
+
+    if (path === '') {
+      const { results } = await env.DB.prepare(
+        `SELECT path, bytes, ctype FROM files
+         WHERE tenant_id = ?1 AND slug = ?2 AND version = ?3 ORDER BY path`,
+      ).bind(tenantId, slug, version).all();
+      return json({ slug, version, files: results });
+    }
+
+    const row = await env.DB.prepare(
+      `SELECT src_version, bytes, ctype FROM files
+       WHERE tenant_id = ?1 AND slug = ?2 AND version = ?3 AND path = ?4`,
+    ).bind(tenantId, slug, version, path).first();
+    if (!row) return err(404, 'no such file in this version');
+    const obj = await env.SITES.get(objectKey(tenantId, slug, row.src_version, path));
+    if (!obj) return err(404, 'no such file in this version');
+    return new Response(obj.body, {
+      headers: {
+        'content-type': row.ctype || 'application/octet-stream',
+        'content-length': String(row.bytes),
+        'cache-control': 'private, no-store',
+        'x-content-type-options': 'nosniff',
+      },
+    });
+  }
+
   if (action === 'files' && request.method === 'PUT') {
     const path = normalizePath(parts.slice(3).join('/'));
     if (!path) return err(400, 'invalid file path');

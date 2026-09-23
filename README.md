@@ -335,7 +335,7 @@ previous look until the TTL expires.
 
 ```
 src/index.js      host routing (apex vs tenant), docs routes
-src/api.js        write API, staging, publish, versions, admin
+src/api.js        token API (writes + owner reads), staging, publish, versions, admin
 src/serve.js      read path, URL resolution, caching
 src/render.js     markdown -> HTML, link rewriting
 src/tar.js        tar/gzip reader

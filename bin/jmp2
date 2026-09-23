@@ -9,6 +9,8 @@
 #   jmp2 public <slug>               list it publicly and drop any password
 #   jmp2 ls                          list your sites
 #   jmp2 info <slug>                 show versions for one site
+#   jmp2 files <slug>                list files in the live version
+#   jmp2 cat <slug> <path> [ver]     print one file (ver: a number or 'staged')
 #   jmp2 rollback <slug> <version>   go back to an earlier version
 #   jmp2 rm <slug>                   delete a site
 #   jmp2 whoami                      check the current token and quota usage
@@ -94,6 +96,12 @@ case "$cmd" in
     set_visibility "$slug" public "" ;;
   ls)       req GET "/sites" ;;
   info)     req GET "/sites/${1:?usage: jmp2 info <slug>}" ;;
+  files)    req GET "/sites/${1:?usage: jmp2 files <slug>}/files" ;;
+  cat)
+    slug="${1:?usage: jmp2 cat <slug> <path> [version]}"; path="${2:?usage: jmp2 cat <slug> <path> [version]}"
+    query=""; [[ -n "${3:-}" ]] && query="?version=$3"
+    req GET "/sites/$slug/files/$path$query"
+    ;;
   rm)       req DELETE "/sites/${1:?usage: jmp2 rm <slug>}" ;;
   whoami)   req GET "/whoami" ;;
   tokens)   req GET "/tokens" ;;
@@ -105,7 +113,7 @@ case "$cmd" in
     req POST "/sites/$slug/rollback" -H 'content-type: application/json' -d "{\"version\":$version}"
     ;;
   ""|-h|--help|help)
-    sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'
     ;;
   *)
     echo "unknown command: $cmd (try: jmp2 help)" >&2; exit 1 ;;

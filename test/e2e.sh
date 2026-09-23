@@ -213,10 +213,30 @@ echo "== single-file update and republish =="
 c -X PUT "$APEX/_api/sites/$SLUG/files/api.md" -H "Authorization: Bearer $TOKEN" \
   --data-binary '# API v2' > /dev/null
 absent "staged edit is not live yet" "API v2" "$(c "$SUB/$SLUG/api")"
+contains "but the owner can read the staged bytes" "API v2" \
+  "$(c "$APEX/_api/sites/$SLUG/files/api.md?version=staged" -H "Authorization: Bearer $TOKEN")"
 c -X POST "$APEX/_api/sites/$SLUG/publish" -H "Authorization: Bearer $TOKEN" > /dev/null
 contains "published edit is live" "API v2" "$(c "$SUB/$SLUG/api")"
 contains "old assets survive the republish" "content-type: image/png" \
   "$(hdrs "$SUB/$SLUG/img/logo.png")"
+
+echo "== owner reads via the api =="
+FILES=$(c "$APEX/_api/sites/$SLUG/files" -H "Authorization: Bearer $TOKEN")
+contains "the owner can list the live files" '"path": "api.md"' "$FILES"
+contains "the list carries sizes" '"bytes"' "$FILES"
+contains "the owner reads the live bytes" "API v2" \
+  "$(c "$APEX/_api/sites/$SLUG/files/api.md" -H "Authorization: Bearer $TOKEN")"
+contains "the read keeps the stored content type" "content-type: text/plain" \
+  "$(hdrs "$APEX/_api/sites/$SLUG/files/api.md" -H "Authorization: Bearer $TOKEN")"
+contains "an earlier version is still readable" "## Requests" \
+  "$(c "$APEX/_api/sites/$SLUG/files/api.md?version=1" -H "Authorization: Bearer $TOKEN")"
+check "a missing file is 404" 404 \
+  "$(status "$APEX/_api/sites/$SLUG/files/nope.md" -H "Authorization: Bearer $TOKEN")"
+check "a missing version is 404" 404 \
+  "$(status "$APEX/_api/sites/$SLUG/files/api.md?version=99" -H "Authorization: Bearer $TOKEN")"
+check "a garbage version is 400" 400 \
+  "$(status "$APEX/_api/sites/$SLUG/files/api.md?version=latest" -H "Authorization: Bearer $TOKEN")"
+check "reading needs a token" 401 "$(status "$APEX/_api/sites/$SLUG/files/api.md")"
 
 echo "== rollback =="
 c -X POST "$APEX/_api/sites/$SLUG/rollback" -H "Authorization: Bearer $TOKEN" \
@@ -245,6 +265,8 @@ ACME=$(c -X POST "$APEX/_api/admin/tokens" -H "Authorization: Bearer $ADMIN" \
   | sed -n 's/.*"token": "\([^"]*\)".*/\1/p')
 check "another tenant cannot see this site" 404 \
   "$(status "$APEX/_api/sites/$SLUG" -H "Authorization: Bearer $ACME")"
+check "another tenant cannot read its files either" 404 \
+  "$(status "$APEX/_api/sites/$SLUG/files/api.md" -H "Authorization: Bearer $ACME")"
 check "same slug in another tenant is independent" 404 "$(status "http://acme.jmp2.io:$PORT/$SLUG/")"
 
 echo "== visibility: public is listed =="
@@ -275,6 +297,8 @@ check "any username works" 200 "$(status -u "someone-else:hunter2" "$SUB/quiet/"
 check "assets are gated too" 401 "$(status "$SUB/quiet/img/logo.png")"
 check "raw source is gated too" 401 "$(status "$SUB/quiet/api.md")"
 check "assets open with the password" 200 "$(status -u "x:hunter2" "$SUB/quiet/img/logo.png")"
+contains "the owner still reads a gated site via the api, no password" "# API" \
+  "$(c "$APEX/_api/sites/quiet/files/api.md" -H "Authorization: Bearer $TOKEN")"
 
 echo "== a protected site never enters the shared cache =="
 PHDR=$(hdrs -u "x:hunter2" "$SUB/quiet/")
@@ -325,6 +349,9 @@ cliok "cli publishes a secret folder"   '"published": true' push clisecret "$CLI
 cliok "cli publishes with a password"   '"published": true' push clilocked "$CLISITE" --password hunter2
 cliok "cli lists sites"                 '"slug": "clipub"'  ls
 cliok "cli shows one site"              '"visibility"'      info clipub
+cliok "cli lists a site's files"        '"path": "index.md"' files clipub
+cliok "cli prints one file"             '# CLI site'         cat clipub index.md
+cliok "cli reads through a password"    '# CLI site'         cat clilocked index.md
 cliok "cli makes a site secret"         '"visibility": "secret"' secret clipub
 cliok "cli makes a site public again"   '"visibility": "public"' public clipub
 
