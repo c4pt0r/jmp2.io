@@ -515,6 +515,10 @@ check "signed-out account redirects to signup" 302 "$(status "$APEX/account")"
 contains "signup sends an existing owner to the dashboard" "location: /account" \
   "$(hdrs "$APEX/signup" -H "Cookie: __Host-jmp2_session=$SESS")"
 
+contains "the front page offers sign-in up top" 'href="/signup">Sign in' "$(c "$APEX/")"
+contains "and the dashboard once signed in" 'href="/account">Dashboard' \
+  "$(c "$APEX/" -H "Cookie: __Host-jmp2_session=$SESS")"
+
 DASH=$(c "$APEX/account" -H "Cookie: __Host-jmp2_session=$SESS")
 contains "dashboard names the subdomain" "octosite.jmp2.io" "$DASH"
 contains "dashboard shows quota usage" "used" "$DASH"

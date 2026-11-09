@@ -118,6 +118,8 @@ a:hover{text-decoration-color:var(--fg)}
    same specificity and would otherwise win on order. */
 form.topsearch input{height:2rem;border-radius:999px;border-color:var(--line-strong);padding-left:2rem;
   background:var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23878d93' stroke-width='1.6'%3E%3Ccircle cx='7' cy='7' r='5'/%3E%3Cpath d='m11 11 3.5 3.5'/%3E%3C/svg%3E") no-repeat .75rem 50%/.85rem}
+.topnav{position:fixed;top:.85rem;right:3.4rem;z-index:10;display:flex;gap:.5rem}
+.topnav .cta{height:2.1rem}
 .sidebar{background:var(--surface);border-right:1px solid var(--line);padding:1.5rem 1rem;overflow-y:auto}
 .sidebar .site{font-weight:600;font-size:.95rem;display:block;margin-bottom:1rem;
   color:var(--fg);word-break:break-word;text-decoration:none}
@@ -379,6 +381,7 @@ p.note{color:var(--muted);font-size:.85rem}
      toggles instead. */
   .topsearch{position:static;width:auto;margin:.9rem 6rem 0 1.25rem}
   .topsearch.solo{margin-right:3.4rem}
+  .topnav{position:static;justify-content:flex-end;margin:.85rem 3.4rem 0 1.25rem}
   .center{padding:3rem 1.25rem}
 }
 `;
@@ -416,7 +419,7 @@ ${site ? `<input type="hidden" name="site" value="${escapeHtml(site)}">` : ''}<i
 
 const TOGGLE = `<button class="theme-toggle" data-theme-toggle type="button" aria-label="Toggle light and dark theme" title="Toggle theme"><span class="in-light">●</span><span class="in-dark">○</span></button>`;
 
-function shell({ title, bodyHtml, canonical, search }) {
+function shell({ title, bodyHtml, canonical, search, nav }) {
   return `<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
@@ -430,6 +433,7 @@ ${canonical ? `<link rel="canonical" href="${escapeHtml(canonical)}">` : ''}
 <script>${THEME_SCRIPT}</script>
 ${TOGGLE}
 ${search ? searchBox(search) : ''}
+${nav ? `<nav class="topnav">${nav}</nav>` : ''}
 ${bodyHtml}
 </html>`;
 }
@@ -555,7 +559,7 @@ ${links.length ? `<p>${links.map((l) => `<a href="${escapeHtml(l.href)}">${escap
  * pipeline that serves every user site — so it documents the product and
  * demonstrates it at the same time.
  */
-export function landingPage(rootDomain, contentHtml) {
+export function landingPage(rootDomain, contentHtml, { signedIn = false } = {}) {
   const hero = `<div class="hero top">
   <a class="cta" href="/signup">Get a subdomain</a>
   <a class="cta ghost" href="/skill.md">Raw skill</a>
@@ -579,7 +583,18 @@ ${withHero}
   <a href="/llms.txt">llms.txt</a>
 </div>
 </div>`;
-  return new Response(shell({ title: rootDomain, bodyHtml: body }), {
-    headers: { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': CSP },
+  // The way in, top right where people look for it. Signing in lands an
+  // owner on the dashboard anyway, but naming it says where they are going.
+  const nav = signedIn
+    ? '<a class="cta" href="/account">Dashboard</a>'
+    : '<a class="cta" href="/signup">Sign in</a>';
+  return new Response(shell({ title: rootDomain, bodyHtml: body, nav }), {
+    headers: {
+      'content-type': 'text/html; charset=utf-8',
+      'content-security-policy': CSP,
+      // The button depends on the session cookie.
+      'cache-control': 'private, no-cache',
+      vary: 'cookie',
+    },
   });
 }

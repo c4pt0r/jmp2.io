@@ -6,6 +6,8 @@ import { landingPage, messagePage } from './theme.js';
 import { renderMarkdown } from './render.js';
 import { llmsTxt, skillBody, skillMarkdown, openApi } from './skill.js';
 import { CLI_SOURCE, DEFAULT_API_HOST } from './cli.js';
+import { readSession } from './auth.js';
+import { sessionIdentity } from './oauth.js';
 import { RESERVED_SUBDOMAINS, err, isValidTenantId } from './util.js';
 
 /**
@@ -36,12 +38,13 @@ const TEXT_CACHE = 'public, max-age=300';
  * `/skill.md` is served verbatim so it can be curled straight into
  * `~/.claude/skills/jmp2/SKILL.md`.
  */
-function docsRoute(request, env, pathname) {
+async function docsRoute(request, env, pathname) {
   if (pathname === '/') {
     // Rendered by the same pipeline that serves user sites: the front page is
     // also the clearest demo of what the renderer does.
     const { html } = renderMarkdown(skillBody(env.ROOT_DOMAIN), '');
-    return landingPage(env.ROOT_DOMAIN, html);
+    const signedIn = Boolean(sessionIdentity(await readSession(request, env.SESSION_SECRET)));
+    return landingPage(env.ROOT_DOMAIN, html, { signedIn });
   }
   if (pathname === '/skill.md' || pathname === '/SKILL.md') {
     return new Response(skillMarkdown(env.ROOT_DOMAIN), {
@@ -100,7 +103,7 @@ export default {
         if (auth) return auth;
         const account = await handleAccount(request, env, url.pathname);
         if (account) return account;
-        const doc = docsRoute(request, env, url.pathname);
+        const doc = await docsRoute(request, env, url.pathname);
         if (doc) return doc;
         return messagePage({
           status: 404, heading: 'Not found',

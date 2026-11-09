@@ -154,3 +154,12 @@ test('the landing page still works if the document has no h1', async () => {
   assert.ok(page.includes('hero top'), 'the hero must not be dropped');
   assert.ok(page.indexOf('hero top') < page.indexOf('no heading here'));
 });
+
+test('the landing page offers sign-in, or the dashboard once signed in', async () => {
+  const { landingPage } = await import('../src/theme.js');
+  const out = await landingPage('jmp2.io', '<h1>x</h1>').text();
+  assert.match(out, /<nav class="topnav"><a class="cta" href="\/signup">Sign in<\/a>/);
+  const res = landingPage('jmp2.io', '<h1>x</h1>', { signedIn: true });
+  assert.match(await res.text(), /<nav class="topnav"><a class="cta" href="\/account">Dashboard<\/a>/);
+  assert.equal(res.headers.get('cache-control'), 'private, no-cache', 'varies by session, so never shared');
+});
