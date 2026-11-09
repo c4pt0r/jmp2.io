@@ -2,6 +2,7 @@ import { ctypeFor, escapeHtml, isMarkdown, isValidSlug, normalizePath } from './
 import { renderMarkdown } from './render.js';
 import { basicAuthCredentials, usernameMatches, verifyPassword } from './password.js';
 import { CSP, RENDER_VERSION, docPage, messagePage, plainPage } from './theme.js';
+import { searchPage } from './search.js';
 
 const INDEX_NAMES = ['index.md', 'index.markdown', 'README.md', 'readme.md'];
 const MD_SUFFIXES = ['.md', '.markdown'];
@@ -139,7 +140,7 @@ async function tenantIndex(env, tenantId, rootDomain) {
   return plainPage({
     title: `${tenantId}.${rootDomain}`,
     heading: tenantId,
-    bodyHtml: `${body}<div class="footer"><span>served by <a href="https://${escapeHtml(rootDomain)}/">${escapeHtml(rootDomain)}</a></span></div>`,
+    bodyHtml: `${body}<div class="footer">${results.length ? '<a href="/_search">search</a>' : ''}<span>served by <a href="https://${escapeHtml(rootDomain)}/">${escapeHtml(rootDomain)}</a></span></div>`,
     headers: SECURITY_HEADERS,
   });
 }
@@ -170,6 +171,8 @@ export async function serveTenant(request, env, ctx, tenantId) {
   const segments = url.pathname.split('/').slice(1);
   const slug = segments[0] ?? '';
   if (slug === '') return tenantIndex(env, tenantId, env.ROOT_DOMAIN);
+  // Not a valid slug, so it can never collide with a site.
+  if (slug === '_search' && segments.length === 1) return searchPage(request, env, tenantId);
   if (!isValidSlug(slug)) return notFound(null);
   if (segments.length === 1) return redirect(`/${slug}/`);
 

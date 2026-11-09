@@ -140,6 +140,33 @@ still points at.
 A tarball describes the whole site, so it **replaces**: files deleted locally
 disappear. Pass `?merge=1` to overlay instead.
 
+## Search
+
+Every tenant has full-text search at `https://<tenant>.<domain>/_search?q=…`.
+Without `site=` it covers listed sites only, since a search box that surfaced
+secret pages would be a listing. With `site=<slug>` it covers that one site
+whatever its visibility, and a password-protected site asks for its password
+first. Rendered pages link to it from their footer; add `&format=json` for
+machine-readable results.
+
+It runs on D1's FTS5 with the trigram tokenizer, which matches substrings in
+any script — Chinese and Japanese have no spaces for a word tokenizer to split
+on. Terms shorter than three characters fall back to `LIKE`, a scan that is
+fine at small scale.
+
+Index rows are keyed like R2 objects, by `(src_version, path)`, so they never
+change once written and a query joins the live manifest to see only what is
+live: publishing, rollback and copy-on-write edits need no index maintenance.
+Documents are indexed lazily by the search request itself, up to 100 per
+request, which also backfills sites published before search existed. Rows go
+away with the objects they describe.
+
+An existing deployment needs the migration once:
+
+```sh
+npx wrangler d1 execute jmp2 --remote --file=./migrations/0007_search.sql
+```
+
 ## Self-hosting
 
 You need a Cloudflare account and a domain on it. The whole service is one

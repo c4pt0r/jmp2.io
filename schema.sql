@@ -86,3 +86,28 @@ CREATE TABLE IF NOT EXISTS rate_limits (
   window_start INTEGER NOT NULL,
   count        INTEGER NOT NULL
 );
+
+-- Full-text search. See migrations/0007_search.sql for the reasoning.
+CREATE TABLE IF NOT EXISTS search_docs (
+  id          INTEGER PRIMARY KEY,
+  tenant_id   TEXT NOT NULL,
+  slug        TEXT NOT NULL,
+  src_version INTEGER NOT NULL,
+  path        TEXT NOT NULL,
+  title       TEXT,
+  body        TEXT NOT NULL,
+  UNIQUE (tenant_id, slug, src_version, path)
+);
+
+-- Trigram rather than the default word tokenizer: it matches substrings in any
+-- script, and CJK text has no spaces for a word tokenizer to split on.
+CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
+  title, body, content = 'search_docs', content_rowid = 'id', tokenize = 'trigram'
+);
+
+CREATE TRIGGER IF NOT EXISTS search_docs_ai AFTER INSERT ON search_docs BEGIN
+  INSERT INTO search_fts (rowid, title, body) VALUES (new.id, new.title, new.body);
+END;
+CREATE TRIGGER IF NOT EXISTS search_docs_ad AFTER DELETE ON search_docs BEGIN
+  INSERT INTO search_fts (search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body);
+END;

@@ -354,6 +354,13 @@ label.radio{display:inline-flex;align-items:center;gap:.35rem;border:0;padding:0
 form.access button{margin-left:0;padding:.35rem .8rem;font-size:.85rem}
 ul.sites{list-style:none;padding:0;margin:2rem 0}
 ul.sites li{margin:.6rem 0}
+form.search{display:flex;gap:.5rem;margin:1.5rem 0}
+form.search input{flex:1}
+ul.hits{list-style:none;padding:0;margin:2rem 0}
+ul.hits li{margin:0 0 1.5rem}
+ul.hits p{margin:.3rem 0 0;color:var(--muted);font-size:.9rem}
+ul.hits mark{color:var(--fg)}
+p.note{color:var(--muted);font-size:.85rem}
 
 @media (max-width:820px){
   .wrap{grid-template-columns:1fr}
@@ -424,7 +431,7 @@ function navHtml(paths, siteRoot, current) {
     if (dir !== '') out += `<div class="dir">${escapeHtml(dir)}</div>`;
     out += '<ul>';
     for (const p of groups.get(dir).sort(byIndexFirst)) {
-      const href = `${siteRoot}/${p.replace(/\.(md|markdown)$/i, '')}`.replace(/\/(index|readme)$/i, '/');
+      const href = docHref(siteRoot, p);
       const label = p.slice(dir === '' ? 0 : dir.length + 1).replace(/\.(md|markdown)$/i, '');
       const cls = p === current ? ' class="current"' : '';
       out += `<li><a href="${escapeHtml(href)}"${cls}>${escapeHtml(label)}</a></li>`;
@@ -433,6 +440,10 @@ function navHtml(paths, siteRoot, current) {
   }
   return out;
 }
+
+/** The URL a markdown file is served at: no extension, and an index is its directory. */
+export const docHref = (siteRoot, path) =>
+  `${siteRoot}/${path.replace(/\.(md|markdown)$/i, '')}`.replace(/(^|\/)(index|readme)$/i, '$1');
 
 const byIndexFirst = (a, b) => {
   const rank = (p) => (/(^|\/)(index|readme)\.(md|markdown)$/i.test(p) ? 0 : 1);
@@ -456,7 +467,7 @@ ${aside}
 <main>
 ${contentHtml}
 <div class="footer">
-  <a href="${escapeHtml(rawHref)}">view source</a>
+  <span><a href="${escapeHtml(rawHref)}">view source</a> · <a href="/_search?site=${encodeURIComponent(siteRoot.slice(1))}">search</a></span>
   <span>served by <a href="https://${escapeHtml(rootDomain)}/">${escapeHtml(rootDomain)}</a></span>
 </div>
 </main>

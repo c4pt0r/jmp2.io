@@ -44,7 +44,7 @@ absent() {
 # name is taken"), so it starts from a clean local database every time.
 echo "== reset local state =="
 npx wrangler d1 execute jmp2 --local -y --command \
-  "DELETE FROM files; DELETE FROM versions; DELETE FROM sites; DELETE FROM tokens; DELETE FROM tenants; DELETE FROM rate_limits;" \
+  "DELETE FROM files; DELETE FROM versions; DELETE FROM sites; DELETE FROM tokens; DELETE FROM tenants; DELETE FROM rate_limits; DELETE FROM search_docs;" \
   > /dev/null 2>&1 || { echo "could not reset the local D1 database"; exit 1; }
 
 WORK="$(mktemp -d)"
@@ -220,6 +220,17 @@ contains "published edit is live" "API v2" "$(c "$SUB/$SLUG/api")"
 contains "old assets survive the republish" "content-type: image/png" \
   "$(hdrs "$SUB/$SLUG/img/logo.png")"
 
+echo "== search =="
+SR=$(c "$SUB/_search?q=v2&site=$SLUG")
+contains "search finds the live edit" 'href="/handbook/api"' "$SR"
+contains "search highlights the hit" '<mark>v2</mark>' "$SR"
+contains "an index page links to its directory" 'href="/handbook/"' "$(c "$SUB/_search?q=welcome")"
+absent "a replaced page's old text is not found" 'href="/handbook/api"' "$(c "$SUB/_search?q=Responses")"
+contains "search has a json form" '"url": "http://dongxu.jmp2.io:' "$(c "$SUB/_search?q=v2&format=json")"
+contains "rendered pages link to search" "/_search?site=$SLUG" "$(c "$SUB/$SLUG/")"
+check "an unknown site is 404" 404 "$(status "$SUB/_search?q=x&site=nope")"
+check "an empty query renders the form" 200 "$(status "$SUB/_search")"
+
 echo "== owner reads via the api =="
 FILES=$(c "$APEX/_api/sites/$SLUG/files" -H "Authorization: Bearer $TOKEN")
 contains "the owner can list the live files" '"path": "api.md"' "$FILES"
@@ -242,6 +253,9 @@ echo "== rollback =="
 c -X POST "$APEX/_api/sites/$SLUG/rollback" -H "Authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' -d '{"version":1}' > /dev/null
 absent "rollback restores the previous version" "API v2" "$(c "$SUB/$SLUG/api")"
+
+contains "rollback is searchable at once" 'href="/handbook/api"' "$(c "$SUB/_search?q=Responses")"
+absent "and the rolled-back text is not" 'href="/handbook/api"' "$(c "$SUB/_search?q=v2")"
 
 echo "== a tarball replaces, it does not merge =="
 SHRUNK="$WORK/shrunk"; mkdir -p "$SHRUNK/docs"
@@ -286,6 +300,9 @@ absent "a secret site is absent from the public index" 'href="/quiet/"' "$(c "$S
 contains "a secret site is still visible to its owner" '"slug": "quiet"' \
   "$(c "$APEX/_api/sites" -H "Authorization: Bearer $TOKEN")"
 
+absent "a secret site is not in tenant-wide search" 'href="/quiet/' "$(c "$SUB/_search?q=welcome")"
+contains "but it is searchable from its own pages" 'href="/quiet/"' "$(c "$SUB/_search?q=welcome&site=quiet")"
+
 echo "== visibility: a password gates everything under the site =="
 c -X POST "$APEX/_api/sites/quiet/visibility" -H "Authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' -d '{"visibility":"secret","password":"hunter2"}' > /dev/null
@@ -294,6 +311,8 @@ contains "the 401 asks for basic auth" "www-authenticate: basic" "$(hdrs "$SUB/q
 check "a wrong password is 401" 401 "$(status -u "x:nope" "$SUB/quiet/")"
 check "the right password gets in" 200 "$(status -u "x:hunter2" "$SUB/quiet/")"
 check "any username works" 200 "$(status -u "someone-else:hunter2" "$SUB/quiet/")"
+check "searching a gated site needs the password" 401 "$(status "$SUB/_search?q=welcome&site=quiet")"
+contains "and works with it" 'href="/quiet/"' "$(c -u "x:hunter2" "$SUB/_search?q=welcome&site=quiet")"
 check "assets are gated too" 401 "$(status "$SUB/quiet/img/logo.png")"
 check "raw source is gated too" 401 "$(status "$SUB/quiet/api.md")"
 check "assets open with the password" 200 "$(status -u "x:hunter2" "$SUB/quiet/img/logo.png")"

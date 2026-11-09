@@ -165,6 +165,20 @@ async function deleteVersion(env, tenantId, slug, version) {
   const keys = results.map((r) => objectKey(tenantId, slug, r.src_version, r.path));
   for (let i = 0; i < keys.length; i += 900) await env.SITES.delete(keys.slice(i, i + 900));
   await env.DB.batch([
+    // The search index shares the objects' identity, so it is dropped by the
+    // same rule: only what no other version still points at.
+    env.DB.prepare(
+      `DELETE FROM search_docs
+       WHERE tenant_id = ?1 AND slug = ?2
+         AND EXISTS (
+           SELECT 1 FROM files f
+           WHERE f.tenant_id = ?1 AND f.slug = ?2 AND f.version = ?3
+             AND f.path = search_docs.path AND f.src_version = search_docs.src_version)
+         AND NOT EXISTS (
+           SELECT 1 FROM files g
+           WHERE g.tenant_id = ?1 AND g.slug = ?2 AND g.version <> ?3
+             AND g.path = search_docs.path AND g.src_version = search_docs.src_version)`,
+    ).bind(tenantId, slug, version),
     env.DB.prepare('DELETE FROM files WHERE tenant_id = ?1 AND slug = ?2 AND version = ?3')
       .bind(tenantId, slug, version),
     env.DB.prepare('DELETE FROM versions WHERE tenant_id = ?1 AND slug = ?2 AND version = ?3')
@@ -178,8 +192,10 @@ export async function deleteSite(env, tenantId, slug) {
     'SELECT version FROM versions WHERE tenant_id = ?1 AND slug = ?2',
   ).bind(tenantId, slug).all();
   for (const v of versions) await deleteVersion(env, tenantId, slug, v.version);
-  const res = await env.DB.prepare('DELETE FROM sites WHERE tenant_id = ?1 AND slug = ?2')
-    .bind(tenantId, slug).run();
+  const [, res] = await env.DB.batch([
+    env.DB.prepare('DELETE FROM search_docs WHERE tenant_id = ?1 AND slug = ?2').bind(tenantId, slug),
+    env.DB.prepare('DELETE FROM sites WHERE tenant_id = ?1 AND slug = ?2').bind(tenantId, slug),
+  ]);
   return res.meta.changes > 0;
 }
 
