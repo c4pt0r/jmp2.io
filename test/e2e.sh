@@ -173,7 +173,10 @@ contains "image src preserved" 'src="./img/logo.png"' "$HOME_HTML"
 DOCCSP=$(hdrs "$SUB/$SLUG/")
 contains "csp pins scripts to one hash" "script-src 'sha256-" "$DOCCSP"
 absent  "csp never allows inline script on user pages" "script-src 'unsafe-inline'" "$DOCCSP"
-contains "user pages still cannot post forms" "form-action 'none'" "$DOCCSP"
+# The search box needs form-action 'self'; that is harmless only because the
+# tenant origin refuses everything but GET and HEAD.
+contains "user pages may submit forms only to their own origin" "form-action 'self'" "$DOCCSP"
+check "and that origin refuses writes" 405 "$(status -X POST "$SUB/$SLUG/")"
 
 check "extensionless doc renders" 200 "$(status "$SUB/$SLUG/api")"
 API_HTML=$(c "$SUB/$SLUG/api")
@@ -227,7 +230,9 @@ contains "search highlights the hit" '<mark>v2</mark>' "$SR"
 contains "an index page links to its directory" 'href="/handbook/"' "$(c "$SUB/_search?q=welcome")"
 absent "a replaced page's old text is not found" 'href="/handbook/api"' "$(c "$SUB/_search?q=Responses")"
 contains "search has a json form" '"url": "http://dongxu.jmp2.io:' "$(c "$SUB/_search?q=v2&format=json")"
-contains "rendered pages link to search" "/_search?site=$SLUG" "$(c "$SUB/$SLUG/")"
+contains "rendered pages carry a search box" 'class="topsearch' "$(c "$SUB/$SLUG/")"
+contains "scoped to their own site" "name=\"site\" value=\"$SLUG\"" "$(c "$SUB/$SLUG/")"
+contains "the tenant index carries one too" 'class="topsearch' "$(c "$SUB/")"
 check "an unknown site is 404" 404 "$(status "$SUB/_search?q=x&site=nope")"
 check "an empty query renders the form" 200 "$(status "$SUB/_search")"
 

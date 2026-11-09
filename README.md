@@ -146,8 +146,13 @@ Every tenant has full-text search at `https://<tenant>.<domain>/_search?q=…`.
 Without `site=` it covers listed sites only, since a search box that surfaced
 secret pages would be a listing. With `site=<slug>` it covers that one site
 whatever its visibility, and a password-protected site asks for its password
-first. Rendered pages link to it from their footer; add `&format=json` for
-machine-readable results.
+first. Every rendered page and the tenant index carry a search box in the top
+right, scoped to that site or to the tenant's listed sites. Add
+`&format=json` for machine-readable results.
+
+The box is a plain GET form, so rendered pages now carry `form-action 'self'`.
+That is safe because a tenant origin answers GET and HEAD only: a form there
+can search and do nothing else.
 
 It runs on D1's FTS5 with the trigram tokenizer, which matches substrings in
 any script — Chinese and Japanese have no spaces for a word tokenizer to split

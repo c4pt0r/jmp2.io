@@ -89,7 +89,7 @@ test('the CSP still admits nothing but that one script', async () => {
     assert.ok(policy.includes("base-uri 'none'"));
     assert.ok(policy.includes("frame-ancestors 'none'"));
   }
-  assert.ok(CSP.includes("form-action 'none'"), 'content pages must not be able to post');
+  assert.ok(CSP.includes("form-action 'none'"), 'pages without a form must not be able to post');
   assert.ok(CSP_FORM.includes("form-action 'self'"));
 });
 

@@ -1,7 +1,7 @@
 import { ctypeFor, escapeHtml, isMarkdown, isValidSlug, normalizePath } from './util.js';
 import { renderMarkdown } from './render.js';
 import { basicAuthCredentials, usernameMatches, verifyPassword } from './password.js';
-import { CSP, RENDER_VERSION, docPage, messagePage, plainPage } from './theme.js';
+import { CSP_FORM, RENDER_VERSION, docPage, messagePage, plainPage } from './theme.js';
 import { searchPage } from './search.js';
 
 const INDEX_NAMES = ['index.md', 'index.markdown', 'README.md', 'readme.md'];
@@ -140,7 +140,8 @@ async function tenantIndex(env, tenantId, rootDomain) {
   return plainPage({
     title: `${tenantId}.${rootDomain}`,
     heading: tenantId,
-    bodyHtml: `${body}<div class="footer">${results.length ? '<a href="/_search">search</a>' : ''}<span>served by <a href="https://${escapeHtml(rootDomain)}/">${escapeHtml(rootDomain)}</a></span></div>`,
+    search: results.length ? { label: 'Search all sites' } : null,
+    bodyHtml: `${body}<div class="footer"><span>served by <a href="https://${escapeHtml(rootDomain)}/">${escapeHtml(rootDomain)}</a></span></div>`,
     headers: SECURITY_HEADERS,
   });
 }
@@ -252,7 +253,7 @@ export async function serveTenant(request, env, ctx, tenantId) {
       {
         headers: {
           'content-type': 'text/html; charset=utf-8',
-          'content-security-policy': CSP,
+          'content-security-policy': CSP_FORM,
           'cache-control': 'public, max-age=300',
           ...SECURITY_HEADERS,
         },

@@ -36,9 +36,12 @@ export const CSP = [
 ].join('; ');
 
 /**
- * Pages with a form need `form-action`, which the document CSP forbids on
- * purpose. Kept separate so relaxing it can never leak onto rendered user
- * content, which is where the risk actually lives.
+ * Pages with a form need `form-action`, which the strict CSP forbids.
+ *
+ * Rendered tenant pages use this too, for the search box. That is safe
+ * because the only origin it admits is the tenant's own, and tenant origins
+ * answer GET and HEAD alone — a form there can search, and nothing else.
+ * Markdown cannot add a form in any case: raw HTML is escaped.
  */
 export const CSP_FORM = CSP.replace("form-action 'none'", "form-action 'self'");
 
@@ -109,6 +112,12 @@ a:hover{text-decoration-color:var(--fg)}
   font-size:.9rem;line-height:1;cursor:pointer;
   display:flex;align-items:center;justify-content:center}
 .sidebar-toggle:hover{color:var(--fg);border-color:var(--line-strong);opacity:1}
+.topsearch{position:fixed;top:.9rem;right:6rem;z-index:10;margin:0;width:16rem}
+.topsearch.solo{right:3.4rem}
+/* form.topsearch, not .topsearch: the generic input rule further down has the
+   same specificity and would otherwise win on order. */
+form.topsearch input{height:2rem;border-radius:999px;border-color:var(--line-strong);padding-left:2rem;
+  background:var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23878d93' stroke-width='1.6'%3E%3Ccircle cx='7' cy='7' r='5'/%3E%3Cpath d='m11 11 3.5 3.5'/%3E%3C/svg%3E") no-repeat .75rem 50%/.85rem}
 .sidebar{background:var(--surface);border-right:1px solid var(--line);padding:1.5rem 1rem;overflow-y:auto}
 .sidebar .site{font-weight:600;font-size:.95rem;display:block;margin-bottom:1rem;
   color:var(--fg);word-break:break-word;text-decoration:none}
@@ -122,7 +131,7 @@ a:hover{text-decoration-color:var(--fg)}
 .sidebar .dir{font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);
   margin:.9rem 0 .25rem;font-weight:600}
 
-main{min-width:0;padding:2.5rem 3rem 6rem;max-width:52rem}
+main{min-width:0;padding:3.5rem 3rem 6rem;max-width:52rem}
 main>*:first-child{margin-top:0}
 h1,h2,h3,h4{line-height:1.3;margin:2.25rem 0 .75rem;font-weight:650;letter-spacing:-.01em}
 h1{font-size:1.9rem;margin-top:0}
@@ -366,6 +375,10 @@ p.note{color:var(--muted);font-size:.85rem}
   .wrap{grid-template-columns:1fr}
   .sidebar{border-right:0;border-bottom:1px solid var(--line);max-height:14rem;padding:1rem}
   main{padding:1.5rem 1.25rem 4rem}
+  /* No room to float over the page: the box takes its own row beside the
+     toggles instead. */
+  .topsearch{position:static;width:auto;margin:.9rem 6rem 0 1.25rem}
+  .topsearch.solo{margin-right:3.4rem}
   .center{padding:3rem 1.25rem}
 }
 `;
@@ -390,9 +403,20 @@ export const RENDER_VERSION = (() => {
   return h.toString(36);
 })();
 
+/**
+ * The search box, top right beside the toggles. A plain GET form: Enter
+ * submits it, so it needs no button and no script.
+ * @param {{site?: string, label: string, solo?: boolean}} search
+ */
+function searchBox({ site, label, solo }) {
+  return `<form class="topsearch${solo ? ' solo' : ''}" method="get" action="/_search" role="search">
+${site ? `<input type="hidden" name="site" value="${escapeHtml(site)}">` : ''}<input name="q" placeholder="${escapeHtml(label)}" aria-label="${escapeHtml(label)}" enterkeyhint="search" autocomplete="off">
+</form>`;
+}
+
 const TOGGLE = `<button class="theme-toggle" data-theme-toggle type="button" aria-label="Toggle light and dark theme" title="Toggle theme"><span class="in-light">●</span><span class="in-dark">○</span></button>`;
 
-function shell({ title, bodyHtml, canonical }) {
+function shell({ title, bodyHtml, canonical, search }) {
   return `<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
@@ -405,6 +429,7 @@ ${canonical ? `<link rel="canonical" href="${escapeHtml(canonical)}">` : ''}
 <style>${CSS}</style>
 <script>${THEME_SCRIPT}</script>
 ${TOGGLE}
+${search ? searchBox(search) : ''}
 ${bodyHtml}
 </html>`;
 }
@@ -467,12 +492,15 @@ ${aside}
 <main>
 ${contentHtml}
 <div class="footer">
-  <span><a href="${escapeHtml(rawHref)}">view source</a> · <a href="/_search?site=${encodeURIComponent(siteRoot.slice(1))}">search</a></span>
+  <a href="${escapeHtml(rawHref)}">view source</a>
   <span>served by <a href="https://${escapeHtml(rootDomain)}/">${escapeHtml(rootDomain)}</a></span>
 </div>
 </main>
 </div>`;
-  return shell({ title, bodyHtml: body, canonical });
+  // The site toggle sits where a one-page site has nothing, so the box moves
+  // over to fill the gap.
+  const search = { site: siteRoot.slice(1), label: 'Search this site', solo };
+  return shell({ title, bodyHtml: body, canonical, search });
 }
 
 /** Shell for the signup and dashboard pages: same look, plus a form CSP. */
@@ -491,15 +519,22 @@ ${bare ? '' : `<div class="footer"><a href="/">${escapeHtml(rootDomain || 'home'
   });
 }
 
-/** A centered page with the strict content CSP: no forms, one pinned script. */
-export function plainPage({ status = 200, title, heading, bodyHtml, headers = {} }) {
+/**
+ * A centered page with the strict content CSP: no forms, one pinned script —
+ * unless it carries the search box, which needs a form.
+ */
+export function plainPage({ status = 200, title, heading, bodyHtml, headers = {}, search }) {
   const body = `<div class="center">
 <h1>${escapeHtml(heading)}</h1>
 ${bodyHtml}
 </div>`;
-  return new Response(shell({ title, bodyHtml: body }), {
+  return new Response(shell({ title, bodyHtml: body, search: search && { ...search, solo: true } }), {
     status,
-    headers: { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': CSP, ...headers },
+    headers: {
+      'content-type': 'text/html; charset=utf-8',
+      'content-security-policy': search ? CSP_FORM : CSP,
+      ...headers,
+    },
   });
 }
 
