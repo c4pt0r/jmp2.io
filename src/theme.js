@@ -120,7 +120,12 @@ form.topsearch input{height:2rem;border-radius:999px;border-color:var(--line-str
   background:var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23878d93' stroke-width='1.6'%3E%3Ccircle cx='7' cy='7' r='5'/%3E%3Cpath d='m11 11 3.5 3.5'/%3E%3C/svg%3E") no-repeat .75rem 50%/.85rem}
 .topnav{position:fixed;top:.85rem;right:3.4rem;z-index:10;display:flex;gap:.5rem}
 .topnav .cta{height:2.1rem}
-.sidebar{background:var(--surface);border-right:1px solid var(--line);padding:1.5rem 1rem;overflow-y:auto}
+.home{position:fixed;top:.9rem;left:.9rem;z-index:10;height:2rem;padding:0 .8rem;
+  display:flex;align-items:center;gap:.35rem;border:1px solid var(--line);border-radius:999px;
+  background:var(--bg);color:var(--muted);font-size:.8rem;font-weight:600;text-decoration:none}
+.home:hover{color:var(--fg);border-color:var(--line-strong)}
+/* Room at the top of the sidebar for the home button that floats over it. */
+.sidebar{background:var(--surface);border-right:1px solid var(--line);padding:3.6rem 1rem 1.5rem;overflow-y:auto}
 .sidebar .site{font-weight:600;font-size:.95rem;display:block;margin-bottom:1rem;
   color:var(--fg);word-break:break-word;text-decoration:none}
 .sidebar ul{list-style:none;margin:0;padding:0}
@@ -380,6 +385,7 @@ p.note{color:var(--muted);font-size:.85rem}
   /* No room to float over the page: the box takes its own row beside the
      toggles instead. */
   .topsearch{position:static;width:auto;margin:.9rem 6rem 0 1.25rem}
+  .topsearch.after-home{margin-left:6.6rem}
   .topsearch.solo{margin-right:3.4rem}
   .topnav{position:static;justify-content:flex-end;margin:.85rem 3.4rem 0 1.25rem}
   .center{padding:3rem 1.25rem}
@@ -409,10 +415,10 @@ export const RENDER_VERSION = (() => {
 /**
  * The search box, top right beside the toggles. A plain GET form: Enter
  * submits it, so it needs no button and no script.
- * @param {{site?: string, label: string, solo?: boolean}} search
+ * @param {{site?: string, label: string, solo?: boolean, afterHome?: boolean}} search
  */
-function searchBox({ site, label, solo }) {
-  return `<form class="topsearch${solo ? ' solo' : ''}" method="get" action="/_search" role="search">
+function searchBox({ site, label, solo, afterHome }) {
+  return `<form class="topsearch${solo ? ' solo' : ''}${afterHome ? ' after-home' : ''}" method="get" action="/_search" role="search">
 ${site ? `<input type="hidden" name="site" value="${escapeHtml(site)}">` : ''}<input name="q" placeholder="${escapeHtml(label)}" aria-label="${escapeHtml(label)}" enterkeyhint="search" autocomplete="off">
 </form>`;
 }
@@ -491,7 +497,10 @@ export function docPage({ title, contentHtml, siteRoot, siteLabel, docPaths, cur
   const toggle = solo ? '' : `<button class="sidebar-toggle" data-sidebar-toggle type="button"
   aria-label="Show or hide the page list" title="Show or hide the page list">&#9776;</button>`;
 
-  const body = `${toggle}<div class="wrap${solo ? ' solo' : ''}">
+  // Home is the tenant's index: every site they publish. The site's own front
+  // page is already a click away, at the top of the sidebar.
+  const home = '<a class="home" href="/" title="All sites">&larr; Home</a>';
+  const body = `${home}${toggle}<div class="wrap${solo ? ' solo' : ''}">
 ${aside}
 <main>
 ${contentHtml}
@@ -503,7 +512,7 @@ ${contentHtml}
 </div>`;
   // The site toggle sits where a one-page site has nothing, so the box moves
   // over to fill the gap.
-  const search = { site: siteRoot.slice(1), label: 'Search this site', solo };
+  const search = { site: siteRoot.slice(1), label: 'Search this site', solo, afterHome: true };
   return shell({ title, bodyHtml: body, canonical, search });
 }
 

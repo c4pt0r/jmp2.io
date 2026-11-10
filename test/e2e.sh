@@ -233,6 +233,7 @@ contains "search has a json form" '"url": "http://dongxu.jmp2.io:' "$(c "$SUB/_s
 contains "rendered pages carry a search box" 'class="topsearch' "$(c "$SUB/$SLUG/")"
 contains "scoped to their own site" "name=\"site\" value=\"$SLUG\"" "$(c "$SUB/$SLUG/")"
 contains "the tenant index carries one too" 'class="topsearch' "$(c "$SUB/")"
+contains "rendered pages link home, top left" '<a class="home" href="/"' "$(c "$SUB/$SLUG/api")"
 check "an unknown site is 404" 404 "$(status "$SUB/_search?q=x&site=nope")"
 check "an empty query renders the form" 200 "$(status "$SUB/_search")"
 
